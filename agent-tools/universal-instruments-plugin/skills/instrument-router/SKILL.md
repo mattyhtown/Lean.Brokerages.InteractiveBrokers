@@ -56,6 +56,8 @@ Status as checked on 2026-11-15. Re-check a namespace before relying on it.
 | Macro proxies | `Alpaca-trading` `get_index_latest_values` (SPX, VIX), `get_fixed_income_latest_quotes` (Treasury ISINs); `prediction-markets` Kalshi event markets | Market-implied only, not the underlying economic releases. |
 | Sector fund flows (ETF creations and redemptions) | None | No connected source. Unusual Whales is in `.cursor/mcp.json.example` but not connected. |
 | Sector rotation proxy | `Alpaca-trading` `get_stock_bars` on the sector SPDRs (`XLK,XLF,XLE,XLV,XLI,XLY,XLP,XLU,XLB,XLRE,XLC`) | Works. Price change and traded dollar volume (`v` times `vw`) only; this is not money entering or leaving the funds. |
+| Institutional ownership (13F holdings), insider trades, dark pool totals | None | No connected source. `Sp-global` needs authentication; Unusual Whales is not connected. |
+| Large or off-exchange prints | `Alpaca-trading` `get_stock_trades` | Works, with size `s` and venue `x` per print, but there is no size filter. Liquid names print thousands of trades per second, so only narrow time windows are practical. |
 | Cited web research | `You-research` | Works. A synthesized answer with sources, not a structured data feed. |
 
 ## MCP health
