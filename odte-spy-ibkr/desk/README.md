@@ -2,7 +2,7 @@
 
 Vite + React + TypeScript + React Three Fiber **industrial sci-fi ops floor** for **ODTE SPY**.
 
-Art direction: graphite bulkheads, copper scaffold, signal amber lanes, mint GO / coral STOP lamps — game HUD + player-height WASD/orbit, not a flat dashboard.
+Art direction: graphite bulkheads, copper scaffold, signal amber lanes, mint GO / coral STOP lamps — game HUD + player-height WASD/orbit, floor NPC agents patrolling stations, not a flat dashboard.
 
 Orders stay **UI-locked**. The desk never places trades and never sets `ENABLE_ORDERS=true`.
 

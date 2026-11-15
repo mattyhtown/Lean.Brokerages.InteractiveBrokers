@@ -633,6 +633,37 @@ body,
   }
 }
 
+/* Floor NPC nameplates */
+.agent-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.2rem 0.45rem;
+  background: rgba(6, 9, 8, 0.78);
+  border: 1px solid rgba(201, 160, 102, 0.45);
+  border-radius: 2px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  line-height: 1.15;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.agent-tag strong {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: #f0a84a;
+  font-weight: 700;
+}
+
+.agent-tag span {
+  font-size: 0.48rem;
+  letter-spacing: 0.04em;
+  color: rgba(197, 212, 200, 0.75);
+  text-transform: uppercase;
+}
+
 @media (max-width: 720px) {
   .hud-br {
     display: none;

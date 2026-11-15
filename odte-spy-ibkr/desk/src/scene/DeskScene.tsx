@@ -9,6 +9,7 @@ import { HeroBrand } from './HeroBrand'
 import { KillSwitchPillar } from './KillSwitchPillar'
 import { FloatingPanel } from './FloatingPanel'
 import { DustMotes } from './DustMotes'
+import { FloorAgents } from './agents/FloorAgents'
 import { CameraRig } from './CameraRig'
 import {
   SignalsContent,
@@ -62,6 +63,7 @@ function SceneBody({ state, selected, onSelect }: Props) {
       <DeskSurface />
       <HeroBrand brand={state.brand} symbol={state.symbol} />
       <KillSwitchPillar safety={state.safety} flatten={state.flatten} />
+      <FloorAgents state={state} />
       <DustMotes count={160} />
 
       <FloatingPanel
@@ -153,7 +155,7 @@ export function DeskScene({ state, selected, onSelect }: Props) {
       className="desk-canvas"
       shadows
       dpr={[1, 1.75]}
-      camera={{ position: [0, 1.72, 6.4], fov: 55, near: 0.1, far: 60 }}
+      camera={{ position: [0, 1.85, 7.2], fov: 52, near: 0.1, far: 60 }}
       gl={{ antialias: true, alpha: false }}
       onPointerMissed={() => onSelect('')}
     >
