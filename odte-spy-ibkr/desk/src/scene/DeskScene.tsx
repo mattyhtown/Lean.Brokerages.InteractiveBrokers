@@ -1,4 +1,3 @@
-import { Suspense } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { ContactShadows } from '@react-three/drei'
 import type { DeskState } from '../data/types'
@@ -125,6 +124,7 @@ function SceneBody({ state }: Props) {
 }
 
 export function DeskScene({ state }: Props) {
+  // No Suspense wrapper — room must mount without waiting on CDN HDRI/fonts.
   return (
     <Canvas
       className="desk-canvas"
@@ -133,9 +133,7 @@ export function DeskScene({ state }: Props) {
       camera={{ position: [0.2, 2.4, 7.2], fov: 42, near: 0.1, far: 60 }}
       gl={{ antialias: true, alpha: false }}
     >
-      <Suspense fallback={null}>
-        <SceneBody state={state} />
-      </Suspense>
+      <SceneBody state={state} />
     </Canvas>
   )
 }
