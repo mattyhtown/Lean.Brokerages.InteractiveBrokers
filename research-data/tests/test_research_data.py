@@ -1036,9 +1036,69 @@ def test_benzinga_paging_that_does_not_advance_is_an_error_instead_of_an_endless
     monkeypatch.setattr("research_data.benzinga.MAX_PAGES", 2)
     more = benzinga_page(*(benzinga_article(number, created, f"Headline {number}") for number in range(100, 200)))
     http = FakeHttp([full, more])
-    with pytest.raises(LoaderError, match="more than 200 AAPL headlines since 2026-11-02"):
+    with pytest.raises(LoaderError, match="more than 2 requests for the AAPL headlines since 2026-11-02"):
         list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), http))
     assert len(http.calls) == 2
+
+
+def test_a_long_benzinga_download_starts_again_from_the_date_it_reached_instead_of_paging_deeper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("research_data.benzinga.PAGE_SIZE", 2)
+    monkeypatch.setattr("research_data.benzinga.WINDOW_PAGES", 2)
+
+    def article(number: int, created: str) -> dict[str, object]:
+        return benzinga_article(number, created, f"Headline {number}")
+
+    # 23:30 in New York on 9 November is already 10 November in UTC.
+    first = [article(1, "Tue, 03 Nov 2026 10:00:00 -0500"), article(2, "Mon, 09 Nov 2026 09:00:00 -0500")]
+    second = [article(3, "Mon, 09 Nov 2026 10:00:00 -0500"), article(4, "Mon, 09 Nov 2026 23:30:00 -0500")]
+    http = FakeHttp(
+        [
+            benzinga_page(*first),
+            benzinga_page(*second),
+            # The new stretch starts with headlines already read.
+            benzinga_page(first[1], second[0]),
+            benzinga_page(second[1], article(5, "Thu, 12 Nov 2026 08:00:00 -0500")),
+            benzinga_page(article(6, "Fri, 13 Nov 2026 08:00:00 -0500")),
+        ]
+    )
+    pages = list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), http))
+    assert [[headline.id for headline in page] for page in pages] == [["1", "2"], ["3", "4"], ["5"], ["6"]]
+    queries = [urllib.parse.parse_qs(urllib.parse.urlparse(url).query) for _, url, _, _ in http.calls]
+    assert [(query["dateFrom"][0], query["page"][0]) for query in queries] == [
+        ("2026-11-02", "0"),
+        ("2026-11-02", "1"),
+        ("2026-11-09", "0"),
+        ("2026-11-09", "1"),
+        ("2026-11-11", "0"),
+    ]
+
+    # Once the new stretch has moved past the headlines already read, a repeated page is still an error.
+    moved_on = benzinga_page(second[1], article(5, "Thu, 12 Nov 2026 08:00:00 -0500"))
+    repeated = FakeHttp([benzinga_page(*first), benzinga_page(*second), moved_on, benzinga_page(*second)])
+    with pytest.raises(LoaderError, match="same AAPL headlines for page 1"):
+        list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), repeated))
+
+
+def test_more_benzinga_headlines_in_two_days_than_one_stretch_holds_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("research_data.benzinga.PAGE_SIZE", 2)
+    monkeypatch.setattr("research_data.benzinga.WINDOW_PAGES", 2)
+    created = "Tue, 03 Nov 2026 10:00:00 -0500"
+    busy = [benzinga_page(*(benzinga_article(number, created, "x") for number in pair)) for pair in ((1, 2), (3, 4))]
+    with pytest.raises(LoaderError) as raised:
+        list(headline_pages("bz-key", "AAPL", date(2026, 11, 3), FakeHttp(busy)))
+    assert str(raised.value) == (
+        "Benzinga has more than 4 AAPL headlines within two days of 2026-11-03, which cannot be paged through"
+    )
+
+    # The same when the day it restarts from holds a whole stretch of headlines already read.
+    later = "Thu, 05 Nov 2026 10:00:00 -0500"
+    moved = [benzinga_page(*(benzinga_article(number, later, "x") for number in pair)) for pair in ((1, 2), (3, 4))]
+    with pytest.raises(LoaderError, match="more than 4 AAPL headlines within two days of 2026-11-04"):
+        list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), FakeHttp(moved + moved)))
 
 
 def test_benzinga_headlines_are_stored_per_symbol_as_first_seen_for_watchlist_and_mentioned_symbols() -> None:
