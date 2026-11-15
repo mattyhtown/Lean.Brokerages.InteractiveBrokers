@@ -1384,17 +1384,76 @@ def test_an_alphavantage_http_error_does_not_show_the_key() -> None:
     assert str(raised.value) == "HTTP 403 from www.alphavantage.co/query: forbidden for [key]"
 
 
-def test_alphavantage_paging_that_does_not_advance_is_an_error_instead_of_an_endless_download(
+def alphavantage_time_from(http: FakeHttp) -> list[str]:
+    return [urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["time_from"][0] for _, url, _, _ in http.calls]
+
+
+def test_alphavantage_ends_at_a_response_shorter_than_an_earlier_one() -> None:
+    scores = {"AAPL": ("0.5", "0.1")}
+    early = [alphavantage_article(number, f"20261103T09{number:02d}00", scores) for number in range(5)]
+    # 55 articles in the newest minute: asked again from that minute, they come back as a response of 50 or more.
+    burst = [alphavantage_article(100 + number, f"20261104T1015{number:02d}", scores) for number in range(55)]
+    http = FakeHttp([alphavantage_page(*early, *burst), alphavantage_page(*burst)])
+    assert [len(page) for page in article_pages("av-key", "AAPL", date(2026, 11, 2), http)] == [60]
+    assert alphavantage_time_from(http) == ["20261102T0000", "20261104T1015"]
+
+
+def test_alphavantage_goes_on_from_the_next_minute_when_one_minute_fills_a_whole_response() -> None:
+    scores = {"AAPL": ("0.5", "0.1")}
+    burst = [alphavantage_article(number, f"20261104T2359{number:02d}", scores) for number in range(55)]
+    empty = alphavantage_message("Information", "No articles found. Please adjust the time range.")
+    http = FakeHttp([alphavantage_page(*burst), alphavantage_page(*burst), empty])
+    assert [len(page) for page in article_pages("av-key", "AAPL", date(2026, 11, 2), http)] == [55]
+    assert alphavantage_time_from(http) == ["20261102T0000", "20261104T2359", "20261105T0000"]
+
+    # An API that sent all 1,000 asked for would have sent this one along with the 55.
+    later = alphavantage_page(alphavantage_article(900, "20261105T080000", scores))
+    http = FakeHttp([alphavantage_page(*burst), alphavantage_page(*burst), later])
+    pages = article_pages("av-key", "AAPL", date(2026, 11, 2), http)
+    assert len(next(pages)) == 55
+    with pytest.raises(LoaderError) as raised:
+        next(pages)
+    assert str(raised.value) == (
+        "Alpha Vantage sends at most 55 AAPL articles a request, not the 1000 asked for, and 2026-11-04 23:59 UTC "
+        "has at least that many: any more from that minute cannot be read"
+    )
+    assert alphavantage_time_from(http) == ["20261102T0000", "20261104T2359", "20261105T0000"]
+
+
+def test_alphavantage_stops_when_a_minute_fills_a_response_no_longer_than_one_that_held_older_articles() -> None:
+    scores = {"AAPL": ("0.5", "0.1")}
+    early = [alphavantage_article(number, f"20261103T09{number:02d}00", scores) for number in range(5)]
+    burst = [alphavantage_article(100 + number, f"20261104T1015{number:02d}", scores) for number in range(55)]
+    # Sixty articles asked for from the 2nd come back as 55, and so do the 55 or more of 10:15.
+    http = FakeHttp([alphavantage_page(*early, *burst[:50]), alphavantage_page(*burst), alphavantage_page(*burst)])
+    pages = article_pages("av-key", "AAPL", date(2026, 11, 2), http)
+    assert [len(next(pages)), len(next(pages))] == [55, 5]
+    with pytest.raises(LoaderError) as raised:
+        next(pages)
+    assert str(raised.value) == (
+        "Alpha Vantage sends at most 55 AAPL articles a request, not the 1000 asked for, and 2026-11-04 10:15 UTC "
+        "has at least that many: any more from that minute cannot be read"
+    )
+    assert alphavantage_time_from(http) == ["20261102T0000", "20261104T1015", "20261104T1015"]
+
+
+def test_alphavantage_paging_that_cannot_advance_is_an_error_instead_of_an_endless_download(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("research_data.alphavantage.SHORTEST_PAGE", 2)
+    monkeypatch.setattr("research_data.alphavantage.PAGE_SIZE", 3)
     scores = {"AAPL": ("0.5", "0.1")}
-    full = alphavantage_page(*(alphavantage_article(number, "20261103T101500", scores) for number in (1, 2)))
-    with pytest.raises(LoaderError, match="same 2 AAPL articles again from 2026-11-03 10:15 UTC"):
-        list(article_pages("av-key", "AAPL", date(2026, 11, 2), FakeHttp([full, full])))
+    full = alphavantage_page(*(alphavantage_article(number, "20261103T101500", scores) for number in (1, 2, 3)))
+    http = FakeHttp([full, full])
+    with pytest.raises(LoaderError) as raised:
+        list(article_pages("av-key", "AAPL", date(2026, 11, 2), http))
+    assert str(raised.value) == (
+        "Alpha Vantage has more than 3 AAPL articles at 2026-11-03 10:15 UTC, which is more than one request can return"
+    )
+    assert len(http.calls) == 2
 
     monkeypatch.setattr("research_data.alphavantage.MAX_PAGES", 2)
-    more = alphavantage_page(*(alphavantage_article(number, "20261104T101500", scores) for number in (3, 4)))
+    more = alphavantage_page(*(alphavantage_article(number, "20261104T101500", scores) for number in (4, 5, 6)))
     http = FakeHttp([full, more])
     with pytest.raises(LoaderError, match="more than 2 pages of AAPL articles since 2026-11-02"):
         list(article_pages("av-key", "AAPL", date(2026, 11, 2), http))
