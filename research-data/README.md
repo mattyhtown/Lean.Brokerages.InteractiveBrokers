@@ -1,6 +1,6 @@
 # research-data
 
-Builds the training dataset for a signal model that predicts forward equity returns: Substack newsletters from Gmail, daily news digests from Perplexity, headlines from Benzinga, FinBERT sentiment on all three, daily options metrics from ORATS, daily prices from Databento, split and dividend factors from QuantConnect, and the San Francisco Fed's daily news sentiment index through OpenBB, all stored in Supabase.
+Builds the training dataset for a signal model that predicts forward equity returns: Substack newsletters from Gmail, daily news digests from Perplexity, headlines from Benzinga, FinBERT sentiment on all three, Alpha Vantage's own news sentiment scores, daily options metrics from ORATS, daily prices from Databento, split and dividend factors from QuantConnect, and the San Francisco Fed's daily news sentiment index through OpenBB, all stored in Supabase.
 
 ## What it loads
 
@@ -9,6 +9,7 @@ Builds the training dataset for a signal model that predicts forward equity retu
 | `newsletters` | Every message under a Gmail label, over IMAP, without marking it read | `newsletters` (one row per message) and `newsletter_passages` (the passages that mention a ticker) |
 | `news` | Perplexity `sonar`, asked once per watchlist symbol for the last 24 hours of news | `newsletters` rows with `source = 'perplexity'` and one passage per news item |
 | `benzinga` | Benzinga's news API, asked for each watchlist symbol and each mentioned ticker for the headlines published since `--since` | `newsletters` rows with `source = 'benzinga'` and one passage per headline |
+| `alphavantage` | Alpha Vantage's `NEWS_SENTIMENT` feed, asked for each watchlist symbol and each mentioned ticker for the articles published since `--since` | `alphavantage_news` (one row per article and symbol, with Alpha Vantage's relevance and sentiment scores for that symbol) |
 | `score` | Passages with no sentiment yet, from any of the three text sources | FinBERT label and positive / neutral / negative scores on each passage |
 | `prices` | Databento `EQUS.SUMMARY` daily bars for the same symbols | `daily_prices` |
 | `options` | ORATS end-of-day core data for the same symbols, one trade date at a time | `options_daily` |
@@ -22,6 +23,7 @@ The `training_rows` view joins them into one row per ticker and trading day:
 | `passage_count`, `newsletter_count`, `sentiment_positive`, `sentiment_neutral`, `sentiment_negative`, `sentiment_net` | Newsletters |
 | `news_item_count`, `news_sentiment_positive`, `news_sentiment_neutral`, `news_sentiment_negative`, `news_sentiment_net` | Perplexity news digests |
 | `benzinga_headline_count`, `benzinga_sentiment_positive`, `benzinga_sentiment_neutral`, `benzinga_sentiment_negative`, `benzinga_sentiment_net` | Benzinga headlines |
+| `alphavantage_article_count`, `alphavantage_sentiment`, `alphavantage_relevance` | Alpha Vantage scored news |
 | `market_news_sentiment` | San Francisco Fed index, the same for every symbol on a day |
 | `iv_30d`, `iv_percentile_1y`, `hv_20d`, `skew_slope`, `contango`, `call_volume`, `put_volume`, `call_open_interest`, `put_open_interest` | ORATS |
 | `close` | Databento |
@@ -31,7 +33,7 @@ Every step can be run again over the same dates without creating duplicates.
 
 ## Setup
 
-1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project that already has the earlier files only needs the ones added since; `004_benzinga_and_market_sentiment.sql` is the newest.
+1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project that already has the earlier files only needs the ones added since; `005_alphavantage_news.sql` is the newest.
 2. Edit `watchlist.txt` to the symbols and company names you want to track.
 3. Set these environment variables:
 
@@ -45,6 +47,7 @@ Every step can be run again over the same dates without creating duplicates.
 | `DATABENTO_API_KEY` | `prices` | A Databento API key. Downloads are billed to it by data volume. |
 | `PERPLEXITY_API_KEY` | `news` | A Perplexity API key. Each symbol costs one `sonar` request per day. |
 | `BENZINGA_API_KEY` | `benzinga` | A Benzinga API key with access to the news API |
+| `ALPHAVANTAGE_API_KEY` | `alphavantage` | An Alpha Vantage API key on a premium plan. `NEWS_SENTIMENT` is a premium endpoint: a free key is refused. Each symbol costs at least one request per run. |
 | `ORATS_API_TOKEN` | `options` | An ORATS Data API token. Each weekday loaded costs one request per 10 symbols. |
 | `QUANTCONNECT_LEAN_DATA_DIR` | `adjustments` | The LEAN data folder that holds `equity/usa/factor_files/`. See below. |
 
@@ -55,11 +58,12 @@ poetry install
 poetry run research-data all
 ```
 
-`all` runs every step in the order of the table above over the last 7 days, which suits a daily schedule. It leaves out `news` when `PERPLEXITY_API_KEY` is not set, `benzinga` when `BENZINGA_API_KEY` is not set, `options` when `ORATS_API_TOKEN` is not set, `adjustments` when `QUANTCONNECT_LEAN_DATA_DIR` is not set, and `openbb` when OpenBB is not installed, and says so. To backfill:
+`all` runs every step in the order of the table above over the last 7 days, which suits a daily schedule. It leaves out `news` when `PERPLEXITY_API_KEY` is not set, `benzinga` when `BENZINGA_API_KEY` is not set, `alphavantage` when `ALPHAVANTAGE_API_KEY` is not set, `options` when `ORATS_API_TOKEN` is not set, `adjustments` when `QUANTCONNECT_LEAN_DATA_DIR` is not set, and `openbb` when OpenBB is not installed, and says so. To backfill:
 
 ```bash
 poetry run research-data newsletters --since 2026-01-01
 poetry run research-data benzinga --since 2026-01-01
+poetry run research-data alphavantage --since 2026-01-01
 poetry run research-data score --limit 20000
 poetry run research-data prices --start 2025-10-01
 poetry run research-data options --start 2025-10-01
@@ -109,7 +113,8 @@ It also works with `all`. The extra installs PyTorch and Transformers, about 5 G
 - **Passages.** Each paragraph is one passage, split at sentence ends when longer than 800 characters so it fits FinBERT's input limit. A passage that names several tickers gives all of them the same score.
 - **News.** Each line of a Perplexity digest is one news item and counts only toward the symbol the digest was asked about. A digest is timestamped when its answer arrives. Symbols that are only mentioned in newsletters and are not in `watchlist.txt` get no digest.
 - **Benzinga.** Each headline is one passage. Only the headline is scored, not the article. It counts toward the symbol it was requested for, so a headline Benzinga files under several loaded symbols is stored and scored once for each. It is timestamped with Benzinga's `created` time.
-- **Dates.** A newsletter, news digest or Benzinga headline counts toward the first trading day whose 16:00 New York close comes after it arrived, so a row never uses text from after the close it is paired with. Text with no trading day within the next 5 days is left out.
+- **Alpha Vantage.** Each article is stored once for each loaded symbol Alpha Vantage scored it for, with two numbers Alpha Vantage computes itself: how relevant the article is to that symbol (above 0, up to 1) and its sentiment toward that symbol (Alpha Vantage calls -0.35 and below bearish and 0.35 and above bullish). FinBERT is not run on these articles. On a row, `alphavantage_sentiment` is the average of the day's sentiment scores weighted by relevance, and `alphavantage_relevance` is the plain average relevance; both are null on a day without articles. An article is timestamped with Alpha Vantage's `time_published`.
+- **Dates.** A newsletter, news digest, Benzinga headline or Alpha Vantage article counts toward the first trading day whose 16:00 New York close comes after it arrived, so a row never uses text from after the close it is paired with. Text with no trading day within the next 5 days is left out.
 - **Market sentiment.** `market_news_sentiment` is the index value for the calendar day 21 days before the row's trading day, and null when that day is not loaded. The Fed updates the index about once a week. In the four weeks checked, its file was modified on a Thursday or Friday and ended on the Sunday before, which makes the newest published day up to 12 days old; 21 days leaves room for one missed release.
 - **Options.** A row carries the ORATS metrics for its own trading day. ORATS takes its end-of-day snapshot about 14 minutes before the close, so those values exist before the close the row is paired with. `options_daily.source_updated_at` holds ORATS's own timestamp for each row.
 - **Trading days.** The calendar is every date on which any symbol has a loaded close.
@@ -125,6 +130,9 @@ It also works with `all`. The extra installs PyTorch and Transformers, about 5 G
 - News sentiment is FinBERT's reading of sentences Perplexity wrote, not of the original articles, and the same question can be answered differently on another run.
 - News history starts on the first day `news` ran. Earlier rows have `news_item_count` 0 because nothing was collected, not because there was no news.
 - A Benzinga headline is stored as it read when it was first loaded. In a backfill that is today's wording, which Benzinga may have edited after publication.
+- Alpha Vantage's feed collects articles from many publishers, Benzinga among them, so the Alpha Vantage and Benzinga columns partly describe the same articles.
+- An Alpha Vantage article keeps the scores it had when it was first loaded. In a backfill those are the scores Alpha Vantage serves today; whether it has recalculated them since publication is not known.
+- The `alphavantage` step was checked against Alpha Vantage's published sample responses, not against a paid key. How its feed behaves over a long backfill is untested: the step stops with an error rather than skip articles if the feed does not come oldest first or stops advancing.
 - The San Francisco Fed recalculates the whole index with every release: across the four releases checked, past values moved by up to about 0.015, against a standard deviation of about 0.12. A stored day keeps the value from the release it was first loaded from, so the days stored by the first run carry today's revised values, not the ones published at the time.
 - `market_news_sentiment` assumes the Fed never misses more than one weekly release in a row. After a longer gap, rows from the gap are later filled with values that were not yet published on their date.
 - The options columns are daily totals and levels from ORATS, not individual trades or sweeps.
