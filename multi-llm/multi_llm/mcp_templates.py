@@ -7,6 +7,14 @@ UNUSUAL_WHALES_MCP_URL = "https://api.unusualwhales.com/api/mcp"
 MONGODB_NPX_PACKAGE = "mongodb-mcp-server@3.3.0"
 UNUSUAL_WHALES_NPX_PACKAGE = "@unusualwhales/mcp@1.2.0"
 SUPABASE_NPX_PACKAGE = "@supabase/mcp-server-supabase@0.17.0"
+# Databento publishes no MCP server. This is the metadata-only server from the
+# community NimbleMarkets/dbn-go project; none of its tools incur Databento
+# billing. It is a binary the user installs, not an npx package.
+DATABENTO_MCP_COMMAND = "dbn-go-mcp-meta"
+# Served by Theta Terminal v3 on the user's machine, over SSE only. Clients
+# without SSE support (Claude Desktop, Codex, Zed) and hosted APIs that cannot
+# reach loopback (anthropic-api, openai-responses) therefore omit it.
+THETADATA_MCP_SSE_URL = "http://127.0.0.1:25503/mcp/sse"
 
 SUPPORTED_TARGETS: tuple[str, ...] = (
     "cursor",
@@ -20,6 +28,14 @@ SUPPORTED_TARGETS: tuple[str, ...] = (
     "windsurf",
     "zed",
 )
+
+
+def _databento_stdio(api_key: str = "YOUR_DATABENTO_API_KEY") -> dict[str, object]:
+    return {
+        "command": DATABENTO_MCP_COMMAND,
+        "args": [],
+        "env": {"DATABENTO_API_KEY": api_key},
+    }
 
 
 def render_mcp_config(target: str) -> str:
@@ -49,6 +65,8 @@ def render_mcp_config(target: str) -> str:
                         "MDB_MCP_READ_ONLY": "true",
                     },
                 },
+                "databento": _databento_stdio(),
+                "thetadata": {"url": THETADATA_MCP_SSE_URL},
             }
         }
         return json.dumps(payload, indent=2)
@@ -77,6 +95,7 @@ def render_mcp_config(target: str) -> str:
                         "MDB_MCP_READ_ONLY": "true",
                     },
                 },
+                "databento": _databento_stdio(),
             }
         }
         return json.dumps(payload, indent=2)
@@ -91,6 +110,8 @@ def render_mcp_config(target: str) -> str:
                 '  -e MDB_MCP_API_CLIENT_ID="${MDB_MCP_API_CLIENT_ID}" \\',
                 '  -e MDB_MCP_API_CLIENT_SECRET="${MDB_MCP_API_CLIENT_SECRET}" \\',
                 f"  -e MDB_MCP_READ_ONLY=true -- npx -y {MONGODB_NPX_PACKAGE}",
+                f'claude mcp add databento -e DATABENTO_API_KEY="${{DATABENTO_API_KEY}}" -- {DATABENTO_MCP_COMMAND}',
+                f"claude mcp add --transport sse thetadata {THETADATA_MCP_SSE_URL}",
             ]
         )
 
@@ -146,6 +167,12 @@ def render_mcp_config(target: str) -> str:
                 'MDB_MCP_API_CLIENT_ID = "YOUR_ATLAS_CLIENT_ID"',
                 'MDB_MCP_API_CLIENT_SECRET = "YOUR_ATLAS_CLIENT_SECRET"',
                 'MDB_MCP_READ_ONLY = "true"',
+                "",
+                "[mcp_servers.databento]",
+                f'command = "{DATABENTO_MCP_COMMAND}"',
+                "",
+                "[mcp_servers.databento.env]",
+                'DATABENTO_API_KEY = "YOUR_DATABENTO_API_KEY"',
             ]
         )
 
@@ -187,6 +214,8 @@ def render_mcp_config(target: str) -> str:
                         "MDB_MCP_READ_ONLY": "true",
                     },
                 },
+                "databento": _databento_stdio(),
+                "thetadata": {"url": THETADATA_MCP_SSE_URL, "timeout": 30000},
             }
         }
         return json.dumps(payload, indent=2)
@@ -212,6 +241,12 @@ def render_mcp_config(target: str) -> str:
                     "description": "MongoDB Atlas API Client Secret",
                     "password": True,
                 },
+                {
+                    "type": "promptString",
+                    "id": "databento-api-key",
+                    "description": "Databento API Key",
+                    "password": True,
+                },
             ],
             "servers": {
                 "supabase": {"type": "http", "url": SUPABASE_MCP_URL},
@@ -230,6 +265,8 @@ def render_mcp_config(target: str) -> str:
                         "MDB_MCP_READ_ONLY": "true",
                     },
                 },
+                "databento": {"type": "stdio", **_databento_stdio("${input:databento-api-key}")},
+                "thetadata": {"type": "sse", "url": THETADATA_MCP_SSE_URL},
             },
         }
         return json.dumps(payload, indent=2)
@@ -251,6 +288,8 @@ def render_mcp_config(target: str) -> str:
                         "MDB_MCP_READ_ONLY": "true",
                     },
                 },
+                "databento": _databento_stdio(),
+                "thetadata": {"serverUrl": THETADATA_MCP_SSE_URL},
             }
         }
         return json.dumps(payload, indent=2)
@@ -275,6 +314,7 @@ def render_mcp_config(target: str) -> str:
                     "MDB_MCP_READ_ONLY": "true",
                 },
             },
+            "databento": _databento_stdio(),
         }
     }
     return json.dumps(payload, indent=2)

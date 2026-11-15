@@ -10,7 +10,9 @@ import pytest
 from multi_llm.cli import main as cli_main
 from multi_llm.client import ChatRequest, LLMError, build_wire_request, complete, fanout_complete
 from multi_llm.mcp_templates import (
+    DATABENTO_MCP_COMMAND,
     SUPPORTED_TARGETS,
+    THETADATA_MCP_SSE_URL,
     SUPABASE_MCP_URL,
     SUPABASE_NPX_PACKAGE,
     UNUSUAL_WHALES_MCP_URL,
@@ -423,7 +425,7 @@ def test_fanout_shuts_down_its_thread_pool() -> None:
 def test_claude_desktop_and_zed_templates_match_client_schemas() -> None:
     desktop = json.loads(render_mcp_config("claude-desktop"))["mcpServers"]
     for server in desktop.values():
-        assert server["command"] == "npx"
+        assert isinstance(server["command"], str) and server["command"]
         assert "url" not in server and "type" not in server
 
     zed = json.loads(render_mcp_config("zed"))["context_servers"]
@@ -465,3 +467,43 @@ def test_huggingface_and_openai_compatible_endpoints() -> None:
     )
     assert compat_url == "http://127.0.0.1:8080/v1/chat/completions"
 
+
+@pytest.mark.parametrize(
+    "target", ["cursor", "claude-desktop", "claude-code", "codex", "gemini-cli", "vscode", "windsurf", "zed"]
+)
+def test_databento_is_a_local_stdio_server_on_every_client_target(target: str) -> None:
+    rendered = render_mcp_config(target)
+    assert DATABENTO_MCP_COMMAND in rendered
+    assert "DATABENTO_API_KEY" in rendered
+    assert not re.search(r"\bdb-[A-Za-z0-9]{29}\b", rendered)
+
+
+@pytest.mark.parametrize(
+    ("target", "servers_key", "expected"),
+    [
+        ("cursor", "mcpServers", {"url": THETADATA_MCP_SSE_URL}),
+        ("gemini-cli", "mcpServers", {"url": THETADATA_MCP_SSE_URL, "timeout": 30000}),
+        ("vscode", "servers", {"type": "sse", "url": THETADATA_MCP_SSE_URL}),
+        ("windsurf", "mcpServers", {"serverUrl": THETADATA_MCP_SSE_URL}),
+    ],
+)
+def test_thetadata_uses_each_clients_sse_field(target: str, servers_key: str, expected: dict[str, object]) -> None:
+    assert json.loads(render_mcp_config(target))[servers_key]["thetadata"] == expected
+
+
+def test_thetadata_claude_code_command_uses_sse_transport() -> None:
+    assert f"claude mcp add --transport sse thetadata {THETADATA_MCP_SSE_URL}" in render_mcp_config("claude-code")
+
+
+@pytest.mark.parametrize("target", ["claude-desktop", "codex", "zed", "anthropic-api", "openai-responses"])
+def test_thetadata_is_omitted_where_loopback_sse_cannot_work(target: str) -> None:
+    rendered = render_mcp_config(target)
+    assert "thetadata" not in rendered
+    assert THETADATA_MCP_SSE_URL not in rendered
+
+
+@pytest.mark.parametrize("target", ["anthropic-api", "openai-responses"])
+def test_hosted_api_templates_only_reference_https_servers(target: str) -> None:
+    rendered = render_mcp_config(target)
+    assert DATABENTO_MCP_COMMAND not in rendered
+    assert "http://" not in rendered
