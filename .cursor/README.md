@@ -1,83 +1,87 @@
-# Cursor MCP setup (Supabase + MongoDB + Unusual Whales)
+# Multi-LLM & MCP Setup (Cursor, Anthropic, OpenAI, and All Major LLMs)
 
-Account-level configuration for this workspace. **Do not commit API keys, connection strings, or service role tokens.**
+Account-level MCP and LLM provider reference for this workspace. **Do not commit API keys, connection strings, or service role tokens.**
 
 ## Quick checklist
 
-| Server | Install | Auth | Smoke test |
-|--------|---------|------|------------|
-| **Supabase** | Supabase plugin | OAuth (**Connect** in Settings → Tools & MCP) | `list_projects` → `list_tables` |
-| **MongoDB** | MongoDB (Self-Managed MCP) plugin | `MDB_MCP_*` on the **mongodb** server (see [`mcp-env.example`](mcp-env.example)) | `list-connections` → `connect` → `list-databases` |
-| **Unusual Whales** | Merge [`mcp.json.example`](mcp.json.example) into `~/.cursor/mcp.json` or Cursor MCP UI | Bearer API key | Flow / market read tool after restart |
+| Server | Official Endpoint / Package | Auth | Smoke test |
+|--------|-----------------------------|------|------------|
+| **Supabase** | `https://mcp.supabase.com/mcp` | OAuth (interactive) or Bearer PAT (`SUPABASE_ACCESS_TOKEN`) | `list_projects` -> `list_tables` |
+| **MongoDB** | `mongodb-mcp-server` (official plugin / package) | `MDB_MCP_*` env (see [`mcp-env.example`](mcp-env.example)) | `list-connections` -> `connect` -> `list-databases` |
+| **Unusual Whales** | `https://api.unusualwhales.com/api/mcp` or `@unusualwhales/mcp` | Bearer API key (`UW_API_KEY`) or web OAuth (`mcp.unusualwhales.com` on ChatGPT/Claude/Grok web) | Flow / market read tool |
 
-**After any MCP JSON or env change:** fully quit and reopen Cursor.
+For programmatic multi-LLM routing and config generation across **Anthropic**, **OpenAI**, **Google Gemini**, **xAI Grok**, **Mistral**, **Cohere**, **DeepSeek**, **Groq**, **Together AI**, **Fireworks AI**, **Perplexity**, **Cerebras**, **OpenRouter**, **Azure OpenAI**, **AWS Bedrock**, and **Ollama / local open-weight models**, use the Poetry package in [`../multi-llm/`](../multi-llm/) and key-free env template [`llm-env.example`](llm-env.example).
 
-## Supabase (plugin + OAuth)
+---
 
-1. Install the **Supabase** plugin; confirm **https://mcp.supabase.com/mcp** under Tools & MCP.
-2. Reachability check: `curl -so /dev/null -w "%{http_code}" https://mcp.supabase.com/mcp` → **401** is expected without auth.
-3. In Cursor: **Connect** next to Supabase or run Supabase **`mcp_auth`** when prompted.
-4. Verify: agent calls **`list_projects`**, then **`list_tables`** with a `project_id`.
+## 1. Cursor
 
-Docs: [Supabase MCP guide](https://supabase.com/docs/guides/getting-started/mcp).
+1. **Supabase**: Enable the **Supabase** plugin under **Settings -> Tools & MCP** and click **Connect** (OAuth 2.1).
+2. **MongoDB**: Enable **MongoDB (Self-Managed MCP)** and configure `MDB_MCP_*` in its server environment (see [`MONGODB_SETUP.md`](MONGODB_SETUP.md)).
+3. **Unusual Whales**: Merge [`mcp.json.example`](mcp.json.example) into `~/.cursor/mcp.json`, replace `YOUR_API_KEY` via Cursor's secret UI or private config, and fully restart Cursor.
 
-## MongoDB (plugin + env)
+---
 
-Walkthrough: [mongodb-mcp-setup](https://github.com/mongodb/agent-skills/blob/main/skills/mongodb-mcp-setup/SKILL.md).
+## 2. Anthropic (Claude Desktop, Claude Code, Claude.ai, Messages API)
 
-1. Install **MongoDB (Self-Managed MCP)** plugin.
-2. Choose one auth path (templates in [`mcp-env.example`](mcp-env.example)):
-   - **A** `MDB_MCP_CONNECTION_STRING`
-   - **B** `MDB_MCP_API_CLIENT_ID` + `MDB_MCP_API_CLIENT_SECRET` (+ Atlas API access list IP)
-   - **C** Atlas Local (Docker), no env
-3. Set variables in **Cursor → Settings → Tools & MCP → mongodb → Environment**, or in `~/.mcp-env` (chmod 600). The agent does not handle secret values.
-4. Restart Cursor.
-5. Verify: **`list-connections`** (or **`connect`** with connection string) then **`list-databases`**.
+### Claude Code CLI
+Register the official remote and local MCP servers without committing secrets:
 
-Governance: use the official MongoDB plugin only; avoid ad-hoc `npx @modelcontextprotocol/server-*` wrappers.
-
-## Unusual Whales (hosted MCP)
-
-**Use the API MCP endpoint**, not the docs page or ChatGPT OAuth host:
-
-- Correct: `https://api.unusualwhales.com/api/mcp`
-- Not for Cursor API-key setup: `https://mcp.unusualwhales.com/...` (OAuth for other AI apps)
-
-1. API key: [unusualwhales.com/settings/api-dashboard](https://unusualwhales.com/settings/api-dashboard).
-2. Merge **`mcp.json.example`** into user config; prefer Cursor **secrets UI** over plaintext JSON in git.
-3. Use **either** hosted `unusualwhales` **or** local `unusualwhales-local` (`npx -y @unusualwhales/mcp` + `UW_API_KEY`), not both unless intentional.
-4. Restart Cursor; confirm green/connected under Tools & MCP.
-5. Smoke prompts: unusual NVDA options flow; market state / sector sentiment.
-
-Optional local plugin on this machine: `~/.cursor/plugins/local/unusual-whales-mcp/`.
-
-## Single user `mcp.json` merge
-
-Combine Unusual Whales with any other URL servers you already have. Supabase and MongoDB are normally provided by **plugins**, not duplicated in `mcp.json`.
-
-```json
-{
-  "mcpServers": {
-    "unusualwhales": {
-      "type": "url",
-      "url": "https://api.unusualwhales.com/api/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
-      }
-    }
-  }
-}
+```bash
+claude mcp add --transport http supabase https://mcp.supabase.com/mcp
+claude mcp add --transport http unusualwhales https://api.unusualwhales.com/api/mcp \
+  --header "Authorization: Bearer ${UW_API_KEY}"
+claude mcp add mongodb -e MDB_MCP_API_CLIENT_ID="${MDB_MCP_API_CLIENT_ID}" \
+  -e MDB_MCP_API_CLIENT_SECRET="${MDB_MCP_API_CLIENT_SECRET}" \
+  -e MDB_MCP_READ_ONLY=true -- npx -y mongodb-mcp-server@latest
 ```
 
-## Troubleshooting
+### Claude Desktop
+Merge [`clients/claude_desktop_config.json.example`](clients/claude_desktop_config.json.example) into:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-| Issue | Fix |
-|-------|-----|
-| Supabase tools missing | Re-auth via Connect / `mcp_auth` |
-| MongoDB “no active connections” | Set `MDB_MCP_*` on mongodb server; restart |
-| UW 401 | Regenerate key; check subscription |
-| UW tools missing | Fix JSON; full restart; URL must be `api.unusualwhales.com/api/mcp` |
+For Supabase and Unusual Whales in **Claude.ai Web / Desktop Integrations**, you can also connect via OAuth using `https://mcp.supabase.com/mcp` and `https://mcp.unusualwhales.com` ([Unusual Whales AI Apps](https://unusualwhales.com/ai-apps)).
 
-## Repo scope
+### Anthropic Messages API (Remote MCP Connector)
+Pass `anthropic-beta: mcp-client-2025-04-04` with `mcp_servers` pointing to `https://api.unusualwhales.com/api/mcp` (`authorization_token: UW_API_KEY`) and `https://mcp.supabase.com/mcp` (`authorization_token: SUPABASE_ACCESS_TOKEN`). The `multi-llm` package builds this payload automatically (`poetry run multi-llm chat --provider anthropic --attach-mcp uw,supabase ...`).
 
-These files are **examples** for QuantConnect IB development. They do not change brokerage runtime code. Cloud Agents use the **user’s** Cursor MCP settings on their machine.
+---
+
+## 3. OpenAI (Codex, ChatGPT Connectors, Responses API & Agents SDK)
+
+### OpenAI Codex CLI & Desktop
+Codex reads `~/.codex/config.toml` (macOS/Linux, `chmod 600`) or `%USERPROFILE%\.codex\config.toml` (Windows). Copy from [`clients/codex_config.toml.example`](clients/codex_config.toml.example).
+
+### ChatGPT Web / Desktop (Developer Mode / Connectors)
+In ChatGPT **Settings -> Connectors**, connect via OAuth:
+- **Supabase**: `https://mcp.supabase.com/mcp`
+- **Unusual Whales**: `https://mcp.unusualwhales.com` (web OAuth flow)
+
+### OpenAI Responses API & Agents SDK
+Attach hosted MCP servers directly in `tools` (`type: "mcp"`, `server_url: "https://api.unusualwhales.com/api/mcp"`). Supported natively by `poetry run multi-llm chat --provider openai --attach-mcp uw,supabase ...`.
+
+---
+
+## 4. Every Other Major LLM Client, IDE & Provider Ecosystem
+
+| Ecosystem / Client | Config / Integration Path | Template / Command |
+|--------------------|---------------------------|--------------------|
+| **Google Gemini CLI & SDK** | `~/.gemini/settings.json` (`httpUrl` + stdio `mcpServers`) | [`clients/gemini_settings.json.example`](clients/gemini_settings.json.example) |
+| **xAI Grok** | Grok Web OAuth (`mcp.unusualwhales.com`) or xAI API (`XAI_API_KEY`) | `poetry run multi-llm chat --provider xai ...` |
+| **VS Code / GitHub Copilot** | `.vscode/mcp.json` using encrypted `${input:...}` secret prompts | [`clients/vscode_mcp.json.example`](clients/vscode_mcp.json.example) |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` (`serverUrl` / stdio) | `poetry run multi-llm mcp-config --target windsurf` |
+| **Zed** | `~/.config/zed/settings.json` (`context_servers`) | `poetry run multi-llm mcp-config --target zed` |
+| **Mistral / Cohere / DeepSeek** | Native HTTPS chat APIs + MCP tool bridge | `MISTRAL_API_KEY`, `COHERE_API_KEY`, `DEEPSEEK_API_KEY` |
+| **Groq / Together / Fireworks / Cerebras / Perplexity** | High-throughput OpenAI-compatible inference APIs | `GROQ_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `CEREBRAS_API_KEY`, `PERPLEXITY_API_KEY` |
+| **OpenRouter (300+ LLMs: Llama, Qwen, Nova, etc.)** | Unified `openrouter.ai/api/v1` gateway | `OPENROUTER_API_KEY` (`poetry run multi-llm chat --provider openrouter`) |
+| **Azure OpenAI & AWS Bedrock** | Enterprise cloud deployments (`api-key` / Converse API) | `AZURE_OPENAI_*`, `AWS_BEARER_TOKEN_BEDROCK` |
+| **Ollama / vLLM / LM Studio / SGLang** | Local open-weight models (`http://127.0.0.1:11434/v1`) | `OLLAMA_BASE_URL` / `OPENAI_COMPATIBLE_BASE_URL` |
+
+---
+
+## Governance & Troubleshooting
+
+- **Official servers only**: Use official Supabase (`mcp.supabase.com`), MongoDB (`mongodb-mcp-server`), and Unusual Whales (`api.unusualwhales.com/api/mcp` or `@unusualwhales/mcp`). Do not invoke unvetted shadow `npx @modelcontextprotocol/server-*` wrappers.
+- **Endpoint disambiguation**: Developer API-key setups use `https://api.unusualwhales.com/api/mcp` (not the documentation URL `.../public-api/mcp`). Interactive web OAuth apps (ChatGPT, Claude.ai, Grok web) use `https://mcp.unusualwhales.com`.
+- **Client restarts**: Fully quit and reopen desktop clients (Cursor, Claude Desktop, Codex, Windsurf) after editing MCP JSON/TOML or environment variables.

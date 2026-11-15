@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "httpUrl": "https://mcp.supabase.com/mcp"
+    },
+    "unusualwhales": {
+      "httpUrl": "https://api.unusualwhales.com/api/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_UW_API_KEY"
+      }
+    },
+    "mongodb": {
+      "command": "npx",
+      "args": ["-y", "mongodb-mcp-server@latest"],
+      "env": {
+        "MDB_MCP_API_CLIENT_ID": "YOUR_ATLAS_CLIENT_ID",
+        "MDB_MCP_API_CLIENT_SECRET": "YOUR_ATLAS_CLIENT_SECRET",
+        "MDB_MCP_READ_ONLY": "true"
+      }
+    }
+  }
+}

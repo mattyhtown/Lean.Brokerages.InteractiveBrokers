@@ -1,0 +1,18 @@
+# OpenAI Codex CLI / Desktop (~/.codex/config.toml)
+# Merge into ~/.codex/config.toml (chmod 600). Never commit real secrets.
+
+[mcp_servers.supabase]
+url = "https://mcp.supabase.com/mcp"
+
+[mcp_servers.unusualwhales]
+url = "https://api.unusualwhales.com/api/mcp"
+bearer_token_env_var = "UW_API_KEY"
+
+[mcp_servers.mongodb]
+command = "npx"
+args = ["-y", "mongodb-mcp-server@latest"]
+
+[mcp_servers.mongodb.env]
+MDB_MCP_API_CLIENT_ID = "YOUR_ATLAS_CLIENT_ID"
+MDB_MCP_API_CLIENT_SECRET = "YOUR_ATLAS_CLIENT_SECRET"
+MDB_MCP_READ_ONLY = "true"
