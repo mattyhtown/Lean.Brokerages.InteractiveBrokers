@@ -9,7 +9,7 @@ description: Route research and trades to the right MCP by asset class (equities
 
 1. Classify the user request into one primary asset class (and venue if prediction market).
 2. Call tools on the **first** route below; use fallback only when the primary returns unsupported or missing data.
-3. Use **preview** tools before any live order (Coinbase `coinbase_orders_preview`, Alpaca order tools with user confirmation).
+3. Use **preview** tools before any live order (Coinbase `coinbase_orders_preview`, `ib-lean-bridge` `preview_order`, Alpaca order tools with user confirmation). Call `ib-lean-bridge` `place_order` with `confirm=true` only after the user approves the previewed order.
 4. Never place prediction-market orders without explicit user approval (read-only tools first).
 
 ## Symbol convention
@@ -20,7 +20,7 @@ description: Route research and trades to the right MCP by asset class (equities
 | `OPT:` | Option | `OPT:SPY:2025-06-20:C:450` |
 | `IDXOPT:` | Index option underlier | `IDXOPT:SPX` |
 | `FX:` | Forex | `FX:EURUSD` |
-| `FUT:` | Future | `FUT:ES` |
+| `FUT:` | Future | `FUT:ES`; add the contract month for one contract, `FUT:ES:202612` |
 | `BOND:` | Fixed income | `BOND:US912797SX61` (ISIN) |
 | `CRYPTO:` | Crypto spot | `CRYPTO:BTC-USD` |
 | `PM:` | Prediction market | `PM:kalshi:TICKER` or `PM:polymarket:slug` |
@@ -39,8 +39,9 @@ description: Route research and trades to the right MCP by asset class (equities
 | Treasury auction calendar, sizes and buybacks | Announced and not yet auctioned: `https://www.treasurydirect.gov/TA_WS/securities/upcoming?format=json` (`offeringAmount` and the closing time are empty until the announcement). Tentative dates for about six months: `https://home.treasury.gov/system/files/221/Tentative-Auction-Schedule.xml` (`AuctionDate`, `AnnouncementDate`, `SettlementDate`, `SecurityTermWeekYear`, `SecurityType`, `TIPS`, `FloatingRate`). Planned sizes, the borrowing estimate and the buyback schedule: links on `https://home.treasury.gov/policy-issues/financing-the-government/quarterly-refunding/most-recent-quarterly-refunding-documents` | Works (checked 2026-11-15): 16 upcoming auctions, and a schedule from 2026-11-04 to 2027-05-01. The schedule marks a TIPS auction as a note with the `TIPS` flag set. The refunding page changes four times a year (next on 2027-02-01 and 2027-02-03); read the document links from the page, because their addresses change each quarter |
 | Who bought at Treasury auctions, by investor type | Spreadsheet links on `https://home.treasury.gov/data/investor-class-auction-allotments` (coupons and bills, each from October 2009). Columns: issue date, security, CUSIP, total issue, Federal Reserve, depository institutions, individuals, dealers and brokers, pension and insurance, investment funds, foreign and international, other, in billions of dollars | Works (checked 2026-11-15) with `xlrd`: 1,668 coupon rows. Late: the file dated 2026-11-09 ends at securities issued 2026-11-02. The file name carries its date, so read the link from the page |
 | Treasury auction history as a bulk table | Fiscal Data, no key: `https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/auctions_query?sort=-auction_date&page[size]=<N>&filter=security_type:in:(Note,Bond)` (`auction_date`, `security_term`, `offering_amt`, `high_yield`, `bid_to_cover_ratio`, `indirect_bidder_accepted`, `direct_bidder_accepted`, `primary_dealer_accepted`) | Works but late (checked 2026-11-15): 11,154 rows, the newest auction is 2026-10-22, and the two newest coupon rows had no results yet. Its `upcoming_auctions` table stopped at 2024-03-08. Use TreasuryDirect for anything recent |
-| Bond / FX / CME futures trade | `ib-lean-bridge` + LEAN live IB | — |
-| FX historical bars | `ib-lean-bridge` `get_historical_bars` sec_type CASH | — |
+| Bond / FX / CME futures trade | `ib-lean-bridge` `preview_order`, then `place_order` with `confirm=true` once the user approves. Futures take `expiry` (YYYYMM); bonds take `con_id` from `get_contract_details` | Needs Gateway or TWS running and `IB_ALLOW_ORDERS=1` on the server; without it `place_order` refuses. LEAN live IB for automated strategies (forex and futures; LEAN has no bond type). Not run against a live Gateway. |
+| FX, futures and bond historical bars | `ib-lean-bridge` `get_historical_bars` with `sec_type` CASH, FUT (plus `expiry`) or BOND (plus `con_id`) | — |
+| Open IB orders | `ib-lean-bridge` `get_open_orders`; `cancel_order` with `confirm=true` for orders the bridge placed | — |
 | Crypto spot/perp | `Coinbase` / `Alpaca-trading` crypto tools | — |
 | US crypto futures | `Coinbase` `FUTURE`, `GLOBAL_PERP` | — |
 | Kalshi events / book | `prediction-markets` `list_kalshi_markets`, `get_kalshi_orderbook` | — |
