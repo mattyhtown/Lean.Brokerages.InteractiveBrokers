@@ -85,3 +85,23 @@ test("secret values are redacted from engine output, raw and URL-encoded", () =>
   assert.match(out, /\[REDACTED:ORATS_API_TOKEN\]/);
   assert.match(out, /\[REDACTED:ALPACA_API_SECRET\]/);
 });
+
+test("a secret is redacted however a URL encoder wrote it", () => {
+  const env = { ORATS_API_TOKEN: "ab!1:cd/34+ef 56" };
+  const written = [
+    "ab!1%3Acd/34%2Bef%2056", // Python urllib quote
+    "ab%211%3Acd%2F34%2Bef+56", // httpx query parameter
+    "ab!1%3acd%2f34%2bef%2056", // lower-case hex
+    "ab!1:cd/34+ef 56",
+  ];
+  const out = redactSecrets(written.map((form) => `token=${form}&x=1`).join("\n"), env);
+  assert.equal(
+    out,
+    written.map(() => "token=[REDACTED:ORATS_API_TOKEN]&x=1").join("\n"),
+  );
+});
+
+test("text that only resembles a secret is left alone", () => {
+  const env = { ORATS_API_TOKEN: "a.c+" };
+  assert.equal(redactSecrets("abc+ a.cc a.c", env), "abc+ a.cc a.c");
+});

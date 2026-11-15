@@ -79,6 +79,29 @@ export function resolvePython(hostEnv: NodeJS.ProcessEnv): string {
   return hostEnv.ODTE_PYTHON || "python3";
 }
 
+function percentEncoded(char: string): string {
+  return Array.from(new TextEncoder().encode(char), (byte) => {
+    const hex = byte.toString(16).padStart(2, "0");
+    return `%${hex.replace(/[a-f]/g, (digit) => `[${digit}${digit.toUpperCase()}]`)}`;
+  }).join("");
+}
+
+/**
+ * Matches `value` with any subset of its characters percent-encoded. URL
+ * encoders disagree on which characters to escape (Python's quote keeps "/",
+ * httpx writes a space as "+"), so no single encoded form covers them.
+ */
+function secretPattern(value: string): RegExp {
+  const parts = Array.from(value, (char) => {
+    const forms = [char.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&"), percentEncoded(char)];
+    if (char === " ") {
+      forms.push("\\+");
+    }
+    return `(?:${forms.join("|")})`;
+  });
+  return new RegExp(parts.join(""), "g");
+}
+
 /** Replaces every secret value found in `text`, raw or URL-encoded. */
 export function redactSecrets(text: string, hostEnv: NodeJS.ProcessEnv): string {
   let out = text;
@@ -87,9 +110,7 @@ export function redactSecrets(text: string, hostEnv: NodeJS.ProcessEnv): string 
     if (value === undefined || value.length < 4) {
       continue;
     }
-    for (const needle of new Set([value, encodeURIComponent(value)])) {
-      out = out.split(needle).join(`[REDACTED:${name}]`);
-    }
+    out = out.replace(secretPattern(value), () => `[REDACTED:${name}]`);
   }
   return out;
 }

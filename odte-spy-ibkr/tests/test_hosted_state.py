@@ -162,6 +162,22 @@ def test_sharpe_gate_reads_the_journal(tmp_path):
     assert sharpe["observations"] == 10
     assert sharpe["rolling_sharpe"] < 1.5
     assert sharpe["allows_new_entries"] is False
+    assert sharpe["reason"].startswith("rolling_sharpe_")
+
+
+def test_a_disabled_sharpe_gate_does_not_block_entries(tmp_path):
+    journal = tmp_path / "journal.jsonl"
+    rows = [{"date": f"2026-10-{d:02d}", "pnl": -50.0 if d % 2 else 10.0} for d in range(1, 11)]
+    journal.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    state = _state(
+        _settings(tmp_path, SHARPE_GATE_ENABLED="false", SHARPE_MIN_OBS="5", SHARPE_WINDOW_DAYS="5"),
+        [],
+    )
+    sharpe = state["gates"]["sharpe"]
+    assert sharpe["enabled"] is False
+    assert sharpe["rolling_sharpe"] < sharpe["min"]
+    assert sharpe["allows_new_entries"] is True
+    assert sharpe["reason"] == "gate_disabled"
 
 
 def test_state_is_json_and_does_not_write_the_journal(tmp_path, capsys):
