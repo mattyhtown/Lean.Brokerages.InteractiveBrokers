@@ -13,7 +13,8 @@ import logging
 import os
 import threading
 import time
-from datetime import date, datetime, timedelta
+from collections import deque
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -74,18 +75,17 @@ def _journal_backtest_window(
     journal_path: Path,
     *,
     window_days: int,
-    as_of_date: date,
     rolling_sharpe: float,
     min_credit_fallback: float,
     tick: int,
     degraded: list[str],
 ) -> dict[str, Any]:
-    """Win rate / drawdown / avg credit for calendar window ending `as_of_date` (inclusive)."""
-    cutoff = as_of_date - timedelta(days=max(window_days - 1, 0)) if window_days > 0 else date.min
-    window: list[tuple[date, float, float | None]] = []
+    """Win rate / drawdown / avg credit for the last N journal sessions (same span as Sharpe)."""
+    # Bound memory: keep only the trailing Sharpe-sized session window while streaming.
+    maxlen = max(window_days, 1) if window_days > 0 else None
+    sessions: deque[tuple[date, float, float | None]] = deque(maxlen=maxlen)
     skipped = 0
     if journal_path.is_file():
-        # Stream + date-filter so long journals are not fully retained
         with journal_path.open(encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
@@ -98,15 +98,14 @@ def _journal_backtest_window(
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                     skipped += 1
                     continue
-                if d < cutoff or d > as_of_date:
-                    continue
                 credit_raw = payload.get("credit", payload.get("avg_credit", payload.get("entry_credit")))
                 try:
                     credit = float(credit_raw) if credit_raw is not None else None
                 except (TypeError, ValueError):
                     credit = None
-                window.append((d, pnl, credit))
-    window.sort(key=lambda x: x[0])
+                sessions.append((d, pnl, credit))
+
+    window = sorted(sessions, key=lambda x: x[0])
 
     wins = 0
     credits: list[float] = []
@@ -134,16 +133,18 @@ def _journal_backtest_window(
         avg_credit = min_credit_fallback
         credit_note = "min_credit_fallback"
 
-    note = (
-        f"Live journal ({journal_path.name}) · calendar={window_days}d "
-        f"[{cutoff.isoformat()}→{as_of_date.isoformat()}] · "
-        f"trades={trades} · {credit_note} · tick={tick}"
+    span = (
+        f"{window[0][0].isoformat()}→{window[-1][0].isoformat()}"
+        if window
+        else "empty"
     )
+    note = (
+        f"Live journal ({journal_path.name}) · sessions={window_days} "
+        f"[{span}] · trades={trades} · {credit_note} · tick={tick}"
+    )
+    # Skips stay in the panel note only — do not flip the desk HUD to DEGRADED
     if skipped:
         note += f" · skipped_rows={skipped}"
-        tag = f"journal_skipped_rows:{skipped}"
-        if tag not in degraded:
-            degraded.append(tag)
     if degraded:
         note += f" · {','.join(degraded[:4])}"
 
@@ -398,7 +399,6 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
     backtest = _journal_backtest_window(
         journal_path,
         window_days=window_days,
-        as_of_date=now_et.date(),
         rolling_sharpe=float(sharpe_val) if sharpe_val is not None else 0.0,
         min_credit_fallback=float(settings.min_credit),
         tick=_TICK,
