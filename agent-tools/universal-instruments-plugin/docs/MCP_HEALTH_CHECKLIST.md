@@ -56,6 +56,7 @@ These providers publish hosted MCP endpoints. None is connected or listed in thi
 | Alpha Vantage | `https://mcp.alphavantage.co/mcp` | 401 "Missing access token". Needs an Alpha Vantage API key. |
 | FMP | `https://financialmodelingprep.com/mcp` | 401 "Authentication required". Needs an FMP API key. |
 | Moomoo | `https://mcp.moomoo.com/mcp` | 401 "missing Bearer token". OAuth sign-in with a moomoo account; scopes `quote:read`, `quote:write`, `trade:read`, `trade:write`. Granting `trade:write` lets the agent place and cancel orders. |
+| Tradier | `https://mcp.tradier.com/mcp` | Succeeds and lists 21 tools, including six order-placement tools. A data call returned "API key is required but not provided (via JWT or API_KEY header)", so it needs a Tradier sign-in or API token. |
 
 No hosted MCP endpoint was checked for Zacks, TipRanks, stockanalysis.com or Yahoo Finance. Until a server is connected, use the direct HTTP table in the instrument-router skill.
 

@@ -112,6 +112,23 @@ Documented coverage once connected:
 
 If it is connected, treat it as a fallback to `Alpaca-trading` for US equity and option quotes, and do not place a moomoo order without explicit user approval.
 
+## Tradier (not connected)
+
+Tradier is a broker; quotes, option chains and trading all need a Tradier account. Status as checked on 2026-11-15.
+
+| Route | Status |
+|-------|--------|
+| Hosted MCP `https://mcp.tradier.com/mcp` | Not connected. `initialize` and `tools/list` answer without credentials and list 21 tools, but `get_market_quotes` returned "API key is required but not provided (via JWT or API_KEY header)". |
+| REST `https://api.tradier.com/v1` (sandbox: `https://sandbox.tradier.com/v1`) | No token configured. Quotes and option chains returned 401 "Invalid access token" on both hosts. `markets/clock` and `markets/calendar` answer without a token. |
+
+Tools the hosted MCP lists:
+
+- **Market data:** `get_market_quotes`, `get_historical_data` (daily, weekly or monthly bars), `get_options_chain` (one expiration, optional greeks), `get_company_profile`, `get_market_calendar`.
+- **Account:** `get_user_profile`, `get_account_balances`, `get_account_historical_balances`, `get_positions`, `get_orders`, `get_account_history`, `get_gainloss`, `get_watchlists`, `add_to_watchlist`.
+- **Orders:** `place_equity_order`, `place_option_order`, `place_multileg_option_order`, `place_oco_order`, `place_oto_order`, `place_otoco_order`, `cancel_order`.
+
+The list has no intraday bars and nothing for futures, forex or crypto. If it is connected, treat it as a fallback to `Alpaca-trading` for US equity quotes and option chains with greeks, and do not place a Tradier order without explicit user approval.
+
 ## MCP health
 
 If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugin. Reconnect ORATS/Kraken/Alpaca-paper in Cursor settings.
