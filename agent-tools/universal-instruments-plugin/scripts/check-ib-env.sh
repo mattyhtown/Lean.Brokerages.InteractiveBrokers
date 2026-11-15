@@ -19,7 +19,7 @@ port_open() {
   if command -v nc >/dev/null 2>&1; then
     nc -z -w 2 "$1" "$2" 2>/dev/null
   elif command -v timeout >/dev/null 2>&1; then
-    timeout 2 bash -c ": </dev/tcp/$1/$2" 2>/dev/null
+    timeout 2 bash -c ': </dev/tcp/"$0"/"$1"' "$1" "$2" 2>/dev/null
   else
     return 2
   fi
