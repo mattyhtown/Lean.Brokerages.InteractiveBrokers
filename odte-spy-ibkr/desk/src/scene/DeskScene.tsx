@@ -25,12 +25,13 @@ type Props = {
   onSelect: (id: string) => void
 }
 
+/** Eye-level look-at near each station (not panel top height — avoids orbit/Y fight). */
 const FOCUS: Record<string, [number, number, number]> = {
-  signals: [-3.4, 2.2, 0.2],
-  risk: [3.5, 2.3, 0.1],
-  backtest: [-2.6, 2.5, -3.2],
-  macro: [2.8, 2.6, -3.4],
-  chain: [0.2, 3.2, -1.6],
+  signals: [-3.4, 1.55, 0.2],
+  risk: [3.5, 1.55, 0.1],
+  backtest: [-2.6, 1.55, -3.2],
+  macro: [2.8, 1.55, -3.4],
+  chain: [0.2, 1.65, -1.6],
 }
 
 function SceneBody({ state, selected, onSelect }: Props) {

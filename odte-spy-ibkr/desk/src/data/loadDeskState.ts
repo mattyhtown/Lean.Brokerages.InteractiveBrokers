@@ -8,14 +8,18 @@ const ENGINE_URLS = [
   import.meta.env.VITE_DESK_STATE_URL?.trim() || 'http://127.0.0.1:8787/desk/state',
 ]
 
+function withDegraded(state: DeskState, tag: string): DeskState {
+  const prev = state.degraded ?? []
+  if (prev.includes(tag)) return state
+  return { ...state, degraded: [...prev, tag].slice(-10) }
+}
+
 /**
- * Prefer live desk_api / signal_state. Static mock is fallback only.
- * Desk UI never places orders; engine safety flags are shown truthfully.
+ * Prefer live desk_api. File mirror recovers last tick without rebuilding.
+ * Static mock is cold-start only — never replaces a prior engine/file snapshot on blips.
  * Malformed JSON keeps the previous usable state.
  */
 export async function loadDeskState(prior: DeskState = mockDeskState): Promise<DeskState> {
-  let state: DeskState = prior
-
   for (const url of ENGINE_URLS) {
     try {
       const res = await fetch(url, {
@@ -23,7 +27,7 @@ export async function loadDeskState(prior: DeskState = mockDeskState): Promise<D
         signal: AbortSignal.timeout(2500),
       })
       if (!res.ok) continue
-      const parsed = parseDeskState(await res.json(), state)
+      const parsed = parseDeskState(await res.json(), prior)
       if (parsed) {
         return finalizeDeskState({ ...parsed, source: 'engine' })
       }
@@ -32,14 +36,14 @@ export async function loadDeskState(prior: DeskState = mockDeskState): Promise<D
     }
   }
 
-  // Optional file mirror via Vite public / or proxied path
+  // Last-tick file mirror served by Vite from data/desk/signal_state.json (works if API is down)
   try {
     const res = await fetch('/api/desk/signal_state.json', {
       cache: 'no-store',
       signal: AbortSignal.timeout(1500),
     })
     if (res.ok) {
-      const parsed = parseDeskState(await res.json(), state)
+      const parsed = parseDeskState(await res.json(), prior)
       if (parsed) {
         return finalizeDeskState({ ...parsed, source: 'file' })
       }
@@ -48,10 +52,16 @@ export async function loadDeskState(prior: DeskState = mockDeskState): Promise<D
     // continue
   }
 
+  // Keep last usable live/file snapshot across brief API outages — do not swap in mock
+  if (prior.source === 'engine' || prior.source === 'file') {
+    return finalizeDeskState(withDegraded(prior, 'api_unreachable'))
+  }
+
+  // Cold start only
   try {
     const res = await fetch('/mock/desk-state.json', { cache: 'no-store' })
     if (res.ok) {
-      const parsed = parseDeskState(await res.json(), state)
+      const parsed = parseDeskState(await res.json(), prior)
       if (parsed) {
         return finalizeDeskState({ ...parsed, source: 'static' })
       }
@@ -60,7 +70,7 @@ export async function loadDeskState(prior: DeskState = mockDeskState): Promise<D
     // keep prior / mock
   }
 
-  return finalizeDeskState(state.source === 'mock' ? state : { ...state, source: state.source })
+  return finalizeDeskState(prior)
 }
 
 /** Strict desk chrome: mode forced; UI order lock always on; engine flags preserved. */

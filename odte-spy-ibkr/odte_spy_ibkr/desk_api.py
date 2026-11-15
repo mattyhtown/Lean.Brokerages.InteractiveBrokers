@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,81 @@ def _status_from_bool(ok: bool, *, watch: bool = False) -> str:
     if watch:
         return "watch"
     return "pass"
+
+
+def _journal_backtest_window(
+    journal_path: Path,
+    *,
+    window_days: int,
+    rolling_sharpe: float,
+    min_credit_fallback: float,
+    tick: int,
+    degraded: list[str],
+) -> dict[str, Any]:
+    """Win rate / drawdown / avg credit from the last `window_days` journal rows."""
+    rows: list[tuple[date, float, float | None]] = []
+    if journal_path.is_file():
+        for line in journal_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+                d = date.fromisoformat(str(payload["date"]))
+                pnl = float(payload.get("pnl", 0.0))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+            credit_raw = payload.get("credit", payload.get("avg_credit", payload.get("entry_credit")))
+            try:
+                credit = float(credit_raw) if credit_raw is not None else None
+            except (TypeError, ValueError):
+                credit = None
+            rows.append((d, pnl, credit))
+    rows.sort(key=lambda x: x[0])
+    window = rows[-window_days:] if window_days > 0 else rows
+
+    wins = 0
+    credits: list[float] = []
+    win_pnls: list[float] = []
+    equity = 100_000.0
+    peak = equity
+    max_dd = 0.0
+    for _, pnl, credit in window:
+        if pnl > 0:
+            wins += 1
+            win_pnls.append(pnl)
+        if credit is not None and credit > 0:
+            credits.append(credit)
+        equity += pnl
+        peak = max(peak, equity)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - equity) / peak)
+
+    trades = len(window)
+    win_rate = wins / trades if trades else 0.0
+    if credits:
+        avg_credit = sum(credits) / len(credits)
+        credit_note = "avg_credit"
+    elif win_pnls:
+        avg_credit = sum(win_pnls) / len(win_pnls)
+        credit_note = "avg_win_pnl"
+    else:
+        avg_credit = min_credit_fallback
+        credit_note = "min_credit_fallback"
+
+    return {
+        "windowDays": window_days,
+        "trades": trades,
+        "winRate": round(win_rate, 4),
+        "rollingSharpe": rolling_sharpe,
+        "maxDrawdown": round(max_dd, 4),
+        "avgCredit": round(float(avg_credit), 4),
+        "note": (
+            f"Live journal ({journal_path.name}) · window={window_days}d · "
+            f"trades={trades} · {credit_note} · tick={tick}"
+            + (f" · {','.join(degraded[:4])}" if degraded else "")
+        ),
+    }
 
 
 def build_desk_state(settings: Settings) -> dict[str, Any]:
@@ -159,9 +234,28 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
         else:
             aggregator = MarketContextAggregator(providers, underlying=settings.underlying)
             ctx = aggregator.build()
+            # Harvest silent skips / fetch failures so HUD shows degraded honestly
+            for pid, note in (ctx.provider_notes or {}).items():
+                n = str(note)
+                if n.startswith("not_configured") or n.startswith("error:") or n == "fetch_failed":
+                    tag = f"{pid}:{n.split(':', 1)[0]}"
+                    if tag not in degraded:
+                        degraded.append(tag)
+            if ctx.spot is None or float(ctx.spot or 0.0) <= 0.0:
+                if "spot_unavailable" not in degraded:
+                    degraded.append("spot_unavailable")
+            # Enabled providers that contributed neither notes nor raw payloads
+            for pid in settings.providers_enabled_list:
+                if pid in (ctx.provider_notes or {}) or pid in (ctx.raw_by_provider or {}):
+                    continue
+                tag = f"{pid}:silent"
+                if tag not in degraded:
+                    degraded.append(tag)
     except Exception as exc:  # noqa: BLE001
         degraded.append(f"providers:{exc.__class__.__name__}")
         logger.warning("Provider aggregation degraded: %s", exc)
+
+    market_live = ctx is not None and ctx.spot is not None and float(ctx.spot or 0.0) > 0.0
 
     if ctx is not None:
         spot = float(ctx.spot or 0.0)
@@ -197,24 +291,38 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
             macro_status = "pass"
             macro_detail = macro.reason
 
+        # Empty/default context must not look like green lights
+        if not market_live:
+            if flow_status == "pass":
+                flow_status = "watch"
+                flow_detail = f"{flow_detail};providers_degraded"
+            if macro_status == "pass":
+                macro_status = "watch"
+                macro_detail = f"{macro_detail};providers_degraded"
+
         side_hint = "put_credit" if net_bias >= 0 else "call_credit"
         signals.append(
             {
                 "id": f"live-{_TICK}",
-                "side": side_hint,
+                "side": side_hint if market_live else "none",
                 "summary": (
                     f"Live tick #{_TICK} · spot {spot:.2f} · bias {net_bias:+.2f}"
-                    if spot
-                    else f"Live tick #{_TICK} · spot unavailable · bias {net_bias:+.2f}"
+                    if market_live
+                    else f"Degraded tick #{_TICK} · spot unavailable · {','.join(degraded[:3]) or 'no_market'}"
                 ),
-                "strength": flow_strength,
-                "blocked": flow.decision == GateDecision.BLOCK or macro.blocked
-                or risk_decision.value == "block"
-                or not sharpe_ok,
+                "strength": flow_strength if market_live else 0.0,
+                "blocked": True
+                if not market_live
+                else (
+                    flow.decision == GateDecision.BLOCK
+                    or macro.blocked
+                    or risk_decision.value == "block"
+                    or not sharpe_ok
+                ),
                 "reason": f"{flow.reason};{macro.reason};{risk_reason};{sharpe_reason}",
             }
         )
-        for pid, note in list(ctx.provider_notes.items())[:4]:
+        for pid, note in list(ctx.provider_notes.items())[:6]:
             headlines.append(
                 {
                     "source": str(pid),
@@ -225,7 +333,8 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
     else:
         macro_status = "watch"
         macro_detail = "providers_degraded"
-        degraded.append("no_market_context")
+        if "no_market_context" not in degraded:
+            degraded.append("no_market_context")
         signals.append(
             {
                 "id": f"degraded-{_TICK}",
@@ -276,37 +385,16 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
         f"{flow_detail} · mode={settings.uw_mode.value}",
     )
 
-    # Journal-derived backtest-ish summary
-    returns_n = sharpe_state.observations
-    backtest = {
-        "windowDays": settings.sharpe_window_days,
-        "trades": returns_n,
-        "winRate": 0.0,
-        "rollingSharpe": float(sharpe_val) if sharpe_val is not None else 0.0,
-        "maxDrawdown": 0.0,
-        "avgCredit": settings.min_credit,
-        "note": (
-            f"Live journal ({journal_path.name}) · obs={returns_n} · tick={_TICK}"
-            + (f" · {','.join(degraded)}" if degraded else "")
-        ),
-    }
-    if journal_path.is_file():
-        wins = 0
-        total = 0
-        for line in journal_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            total += 1
-            if float(row.get("pnl", 0.0)) > 0:
-                wins += 1
-        if total:
-            backtest["trades"] = total
-            backtest["winRate"] = wins / total
+    # Journal-derived backtest summary scoped to sharpe_window_days
+    window_days = int(settings.sharpe_window_days)
+    backtest = _journal_backtest_window(
+        journal_path,
+        window_days=window_days,
+        rolling_sharpe=float(sharpe_val) if sharpe_val is not None else 0.0,
+        min_credit_fallback=float(settings.min_credit),
+        tick=_TICK,
+        degraded=degraded,
+    )
 
     state = {
         "asOf": as_of,

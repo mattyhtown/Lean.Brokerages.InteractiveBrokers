@@ -5,10 +5,13 @@ import * as THREE from 'three'
 
 const SPEED = 4.2
 const PLAYER_EYE = 1.72
+const BOUNDS = 9
 
 type ControlsHandle = {
   target: THREE.Vector3
   update: () => void
+  minPolarAngle: number
+  maxPolarAngle: number
 }
 
 /** Player-height orbit + WASD strafe with light idle bob */
@@ -25,16 +28,24 @@ export function CameraRig({ focus }: { focus: [number, number, number] | null })
     const up = (e: KeyboardEvent) => {
       keys.current[e.code] = false
     }
+    const clearKeys = () => {
+      keys.current = {}
+    }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
+    window.addEventListener('blur', clearKeys)
+    document.addEventListener('visibilitychange', clearKeys)
     return () => {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clearKeys)
+      document.removeEventListener('visibilitychange', clearKeys)
     }
   }, [])
 
   useEffect(() => {
     if (!focus || !controls.current) return
+    // Aim at eye-level look-at near the station — not panel top height
     controls.current.target.set(focus[0], focus[1], focus[2])
   }, [focus])
 
@@ -55,10 +66,16 @@ export function CameraRig({ focus }: { focus: [number, number, number] | null })
       move.normalize().multiplyScalar(SPEED * dt)
       camera.position.add(move)
       ctrl.target.add(move)
+      camera.position.x = THREE.MathUtils.clamp(camera.position.x, -BOUNDS, BOUNDS)
+      camera.position.z = THREE.MathUtils.clamp(camera.position.z, -BOUNDS, BOUNDS)
+      ctrl.target.x = THREE.MathUtils.clamp(ctrl.target.x, -BOUNDS, BOUNDS)
+      ctrl.target.z = THREE.MathUtils.clamp(ctrl.target.z, -BOUNDS, BOUNDS)
     }
     bob.current += dt
     const bobY = Math.sin(bob.current * 1.6) * 0.018
+    // Keep player-height camera; focus targets are eye-level so orbit won't fight the lerp
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, PLAYER_EYE + bobY, 0.08)
+    ctrl.target.y = THREE.MathUtils.lerp(ctrl.target.y, focus ? focus[1] : 1.4, 0.12)
     ctrl.update()
   })
 
