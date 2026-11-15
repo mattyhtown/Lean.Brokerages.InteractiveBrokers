@@ -126,5 +126,3 @@ left join prices next_5 on next_5.symbol = p.symbol and next_5.session_number = 
 revoke all on public.options_daily, public.training_rows from anon, authenticated;
 grant select, insert, update on public.options_daily to service_role;
 grant select on public.training_rows to service_role;
--- Lets the loader drop passages that no longer mention a ticker after a watchlist edit.
-grant delete on public.newsletter_passages to service_role;
