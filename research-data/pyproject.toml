@@ -12,6 +12,11 @@ research-data = "research_data.cli:main"
 [tool.poetry.dependencies]
 python = "^3.10"
 qc-multi-llm = { path = "../multi-llm", develop = true }
+torch = { version = ">=2.6", optional = true }
+transformers = { version = ">=4.48", optional = true }
+
+[tool.poetry.extras]
+local = ["torch", "transformers"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"

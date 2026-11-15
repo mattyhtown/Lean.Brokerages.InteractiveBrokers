@@ -10,6 +10,7 @@ from typing import Mapping
 from multi_llm.client import ChatRequest, LLMError, complete
 
 from research_data.http import LoaderError
+from research_data.local_finbert import LocalFinbert
 from research_data.newsletters import fetch_newsletters
 from research_data.pipeline import Sentiment, load_newsletters, load_prices, score_passages
 from research_data.prices import PriceDownload, download_daily_bars
@@ -34,7 +35,7 @@ def _read_watchlist(path: Path) -> Watchlist:
         raise LoaderError(f"Cannot read watchlist {path}: {exc.strerror}") from None
 
 
-def _finbert(text: str) -> Sentiment:
+def _hosted_finbert(text: str) -> Sentiment:
     try:
         response = complete(ChatRequest(provider="finbert", prompt=text))
     except LLMError as exc:
@@ -55,8 +56,9 @@ def _run_newsletters(args: argparse.Namespace, env: Mapping[str, str], supabase:
 
 
 def _run_score(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
-    scored = score_passages(supabase, _finbert, args.limit)
-    print(f"score: scored {scored} passages")
+    score = LocalFinbert() if args.finbert == "local" else _hosted_finbert
+    scored = score_passages(supabase, score, args.limit)
+    print(f"score: scored {scored} passages with {args.finbert} FinBERT")
 
 
 def _run_prices(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
@@ -100,6 +102,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Load prices from this date (default: {_DEFAULT_LOOKBACK_DAYS} days ago)",
     )
     parser.add_argument("--limit", type=int, default=1000, help="Most passages to score in one run (default: 1000)")
+    parser.add_argument(
+        "--finbert",
+        choices=["hosted", "local"],
+        default="hosted",
+        help="Where FinBERT runs: hosted on Hugging Face Inference, which needs HF_TOKEN, or local on this "
+        "machine, which needs `poetry install --extras local` and no token (default: hosted)",
+    )
     parser.add_argument(
         "--watchlist",
         type=Path,

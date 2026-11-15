@@ -26,7 +26,7 @@ Every step can be run again over the same dates without creating duplicates.
 | `SUPABASE_SERVICE_ROLE_KEY` | all steps | The project's secret (service role) key. `SUPABASE_SECRET_KEY` also works. |
 | `GMAIL_ADDRESS` | `newsletters` | The Gmail address that receives the newsletters |
 | `GMAIL_APP_PASSWORD` | `newsletters` | A [Google app password](https://myaccount.google.com/apppasswords); needs 2-Step Verification and IMAP enabled |
-| `HF_TOKEN` | `score` | A Hugging Face token with Inference Providers permission |
+| `HF_TOKEN` | `score`, unless run with `--finbert local` | A Hugging Face token with Inference Providers permission |
 | `DATABENTO_API_KEY` | `prices` | A Databento API key. Downloads are billed to it by data volume. |
 
 ## Run
@@ -45,6 +45,17 @@ poetry run research-data prices --start 2025-10-01
 ```
 
 `score` saves each result as it arrives, so a run that stops partway resumes from the next unscored passage.
+
+## Scoring on your own machine
+
+`--finbert local` runs the same `ProsusAI/finbert` model on this machine instead of calling Hugging Face Inference, so `HF_TOKEN` is not needed:
+
+```bash
+poetry install --extras local
+poetry run research-data score --finbert local
+```
+
+It also works with `all`. The extra installs PyTorch and Transformers, about 5 GB on Linux, and the first run downloads the model, about 440 MB. Scoring uses a GPU when PyTorch finds one and the CPU otherwise. The model is pinned to one revision, so stored scores do not change if the model repository is updated.
 
 ## How mentions become rows
 
@@ -65,3 +76,5 @@ poetry run research-data prices --start 2025-10-01
 ```bash
 poetry run pytest
 ```
+
+With the `local` extra installed, one test also loads the real model and scores three sentences with it.
