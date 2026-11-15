@@ -1,0 +1,16 @@
+version: 1
+promoted_at: null
+strategy:
+  min_minutes_after_open: 30
+  min_credit: 0.15
+  short_delta_min: 0.10
+  short_delta_max: 0.20
+  spread_width: 1.0
+unusual_whales:
+  min_strength: 0.35
+  mode: alerts_only
+macro:
+  headline_intensity_block: 0.75
+metrics:
+  sharpe_rolling: null
+  max_drawdown: null

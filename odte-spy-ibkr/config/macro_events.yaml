@@ -1,0 +1,7 @@
+events:
+  - name: CPI
+    release_at: "2026-11-15T13:30:00-05:00"
+    tier: 1
+  - name: FOMC
+    release_at: "2026-11-20T14:00:00-05:00"
+    tier: 1
