@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "prediction-markets": {
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/agent-tools/universal-instruments-plugin/mcp/prediction-markets/dist/index.js"
+      ]
+    },
+    "ib-lean-bridge": {
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/agent-tools/universal-instruments-plugin/mcp/ib-lean-bridge/server.py"
+      ],
+      "env": {
+        "IB_HOST": "${env:IB_HOST}",
+        "IB_PORT": "${env:IB_PORT}",
+        "IB_CLIENT_ID": "${env:IB_CLIENT_ID}"
+      }
+    }
+  }
+}

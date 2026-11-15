@@ -1,0 +1,17 @@
+---
+description: Multi-asset instrument routing for trading MCPs (equities, options, forex, bonds, crypto, prediction markets). Load skills/instrument-router when classifying trades or market data requests.
+alwaysApply: false
+---
+
+# Instrument routing (summary)
+
+Use the **instrument-router** skill (`skills/instrument-router/SKILL.md`) for full routing tables.
+
+- US equities/options/index options → **Alpaca-trading** first
+- Crypto / Coinbase futures → **Coinbase**
+- Forex, bonds, CME futures, NDX/RUT options → **ib-lean-bridge** + LEAN/IB
+- Kalshi / Polymarket → **prediction-markets** MCP (this plugin)
+- Short interest, fundamentals, earnings dates, analyst ratings, macro series, crypto market caps → direct HTTP sources listed in the skill (no MCP connected)
+- Preview before live orders; PM trading requires explicit user confirmation
+
+MCP health: `docs/MCP_HEALTH_CHECKLIST.md`

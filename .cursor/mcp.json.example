@@ -23,6 +23,23 @@
     },
     "thetadata": {
       "url": "http://127.0.0.1:25503/mcp/sse"
+    },
+    "prediction-markets": {
+      "command": "node",
+      "args": [
+        "agent-tools/universal-instruments-plugin/mcp/prediction-markets/dist/index.js"
+      ]
+    },
+    "ib-lean-bridge": {
+      "command": "python3",
+      "args": [
+        "agent-tools/universal-instruments-plugin/mcp/ib-lean-bridge/server.py"
+      ],
+      "env": {
+        "IB_HOST": "127.0.0.1",
+        "IB_PORT": "7497",
+        "IB_CLIENT_ID": "77"
+      }
     }
   }
 }
