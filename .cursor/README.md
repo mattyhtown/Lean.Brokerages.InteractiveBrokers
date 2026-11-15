@@ -128,8 +128,20 @@ Its `fetch_range` tool is charged to your Databento account. `--max-cost` limits
 
 ---
 
+## Universal instruments (repo plugin)
+
+Multi-asset routing for equities, options, forex, bonds, crypto, and **prediction markets** (Kalshi + Polymarket read-only):
+
+1. Build prediction MCP once: `cd agent-tools/universal-instruments-plugin/mcp/prediction-markets && npm install && npm run build`
+2. Optional IB bridge: `pip install -r agent-tools/universal-instruments-plugin/mcp/ib-lean-bridge/requirements.txt` (requires IB Gateway/TWS).
+3. Merge **`prediction-markets`** and **`ib-lean-bridge`** from [`mcp.json.example`](mcp.json.example) into your user MCP config, or install the plugin from [`agent-tools/universal-instruments-plugin/README.md`](../agent-tools/universal-instruments-plugin/README.md).
+4. Enable skill **instrument-router** / rule **instrument-routing** when asking cross-asset questions.
+5. MCP health and IB setup: [`docs/MCP_HEALTH_CHECKLIST.md`](../agent-tools/universal-instruments-plugin/docs/MCP_HEALTH_CHECKLIST.md), [`docs/IB_LEAN_SETUP.md`](../agent-tools/universal-instruments-plugin/docs/IB_LEAN_SETUP.md).
+
+---
+
 ## Governance & Troubleshooting
 
-- **Vendor servers first**: Supabase (`mcp.supabase.com`), MongoDB (`mongodb-mcp-server`), Unusual Whales (`api.unusualwhales.com/api/mcp` or `@unusualwhales/mcp`), and Theta Data (Theta Terminal v3) are published by the vendor. Databento is the one exception, because Databento has no server of its own; review [dbn-go](https://github.com/NimbleMarkets/dbn-go) before giving it your API key. Do not invoke unvetted shadow `npx @modelcontextprotocol/server-*` wrappers.
+- **Vendor servers first**: Supabase (`mcp.supabase.com`), MongoDB (`mongodb-mcp-server`), Unusual Whales (`api.unusualwhales.com/api/mcp` or `@unusualwhales/mcp`), and Theta Data (Theta Terminal v3) are published by the vendor. Databento is the one exception, because Databento has no server of its own; review [dbn-go](https://github.com/NimbleMarkets/dbn-go) before giving it your API key. `prediction-markets` and `ib-lean-bridge` are not vendor servers either: they run from source in this repository (`agent-tools/universal-instruments-plugin/mcp/`). Do not invoke unvetted shadow `npx @modelcontextprotocol/server-*` wrappers.
 - **Endpoint disambiguation**: Developer API-key setups use `https://api.unusualwhales.com/api/mcp` (not the documentation URL `.../public-api/mcp`). Interactive web OAuth apps (ChatGPT, Claude.ai, Grok web) use `https://mcp.unusualwhales.com`.
 - **Client restarts**: Fully quit and reopen desktop clients (Cursor, Claude Desktop, Codex, Windsurf) after editing MCP JSON/TOML or environment variables.
