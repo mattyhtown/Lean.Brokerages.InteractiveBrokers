@@ -1,0 +1,186 @@
+"""Read-only views for environments with no TWS/Gateway session (the hosted agent).
+
+``python -m odte_spy_ibkr.hosted_state`` prints the current signal and gate
+state. With ``--promotion-check <history.json>`` it prints the promotion
+decision the engine reaches for that improvement record.
+
+Neither connects to IB, places orders, writes the journal or changes the
+active params. Anything that needs an IB session is reported as unavailable
+instead of estimated.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from odte_spy_ibkr.config import Settings, load_settings
+from odte_spy_ibkr.improvement.promoter import should_promote
+from odte_spy_ibkr.improvement.registry import load_active_params
+from odte_spy_ibkr.providers.aggregate import MarketContextAggregator
+from odte_spy_ibkr.providers.base import BaseProvider, MarketContext
+from odte_spy_ibkr.providers.registry import build_providers
+from odte_spy_ibkr.research.ingest import log_credential_status
+from odte_spy_ibkr.risk import ET, RiskLimits, RiskState, check_new_entry
+from odte_spy_ibkr.risk.sharpe_gate import allow_new_entries, sharpe_gate_state
+from odte_spy_ibkr.strategy.flow_gate import evaluate_flow_gate
+from odte_spy_ibkr.strategy.macro_gate import evaluate_macro_gate
+
+IB_UNAVAILABLE_REASON = "no TWS/Gateway session in this environment; connection not attempted"
+
+
+def _provider_status(provider: BaseProvider, ctx: MarketContext) -> dict[str, Any]:
+    note = ctx.provider_notes.get(provider.provider_id)
+    configured = provider.enabled and provider.is_configured()
+    return {
+        "id": provider.provider_id,
+        "enabled": provider.enabled,
+        "configured": configured,
+        "contributed": configured and not (note or "").startswith("error"),
+        "note": note,
+    }
+
+
+def build_state(settings: Settings, *, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(tz=timezone.utc)
+    providers = build_providers(settings, None)
+    ctx = MarketContextAggregator(providers, underlying=settings.underlying).build()
+    statuses = {p.provider_id: _provider_status(p, ctx) for p in providers}
+
+    def contributed(provider_id: str) -> bool:
+        return bool(statuses.get(provider_id, {}).get("contributed", False))
+
+    flow_available = contributed("unusual_whales")
+    macro_news_available = contributed("macro_news")
+    macro_risk_available = macro_news_available or contributed("coinbase")
+    macro = evaluate_macro_gate(settings, ctx)
+    flow = evaluate_flow_gate(settings, ctx, now=now)
+    limits = RiskLimits(
+        max_contracts=settings.max_contracts,
+        max_daily_loss=settings.max_daily_loss,
+        entry_cutoff=settings.entry_cutoff,
+        flatten_time=settings.flatten_time,
+        min_minutes_after_open=settings.min_minutes_after_open,
+    )
+    risk_decision, risk_reason = check_new_entry(limits, RiskState(), now=now.astimezone(ET))
+    sharpe = sharpe_gate_state(
+        settings.journal_path,
+        window=settings.sharpe_window_days,
+        min_obs=settings.sharpe_min_obs,
+    )
+    sharpe_ok, sharpe_reason = allow_new_entries(
+        settings.journal_path,
+        window=settings.sharpe_window_days,
+        min_obs=settings.sharpe_min_obs,
+        sharpe_min=settings.sharpe_min,
+    )
+
+    return {
+        "as_of": now.isoformat(),
+        "underlying": settings.underlying,
+        "safety": {
+            "live_trading": settings.live_trading,
+            "read_only": settings.read_only,
+            "enable_orders": settings.enable_orders,
+            "paper": settings.paper,
+            "orders_allowed": settings.orders_allowed,
+            "improvement_auto_promote_live": settings.improvement_auto_promote_live,
+            "improvement_auto_promote_paper": settings.improvement_auto_promote_paper,
+            "alpha_scored_entry_enabled": settings.alpha_scored_entry_enabled,
+        },
+        "ib_session": {"available": False, "reason": IB_UNAVAILABLE_REASON},
+        "credentials_present": log_credential_status(settings),
+        "providers": list(statuses.values()),
+        "signal": {
+            "spot": ctx.spot,
+            "flow_bias": ctx.flow_bias.value if flow_available else None,
+            "flow_strength": ctx.flow_strength if flow_available else None,
+            "net_call_bias": ctx.net_call_bias if ctx.chain_skew is not None else None,
+            "net_call_bias_unavailable_reason": (
+                None if ctx.chain_skew is not None else "live 0DTE chain comes from the IB session"
+            ),
+            "macro_risk_off": ctx.macro_risk_off if macro_risk_available else None,
+            "macro_headline_score": ctx.macro_headline_score if macro_news_available else None,
+            "macro_event_blackout": ctx.macro_event_blackout if macro_news_available else None,
+            "vol_regime": ctx.vol_regime.value,
+        },
+        "gates": {
+            "risk": {
+                "decision": risk_decision.value,
+                "reason": risk_reason,
+                "assumes_flat_book": True,
+            },
+            "macro": {
+                "decision": macro.decision.value,
+                "reason": macro.reason,
+                "size_scale": macro.size_scale,
+                "inputs_available": macro_risk_available,
+            },
+            "flow": {
+                "decision": flow.decision.value,
+                "reason": flow.reason,
+                "inputs_available": flow_available,
+            },
+            "sharpe": {
+                "enabled": settings.sharpe_gate_enabled,
+                "rolling_sharpe": sharpe.rolling_sharpe,
+                "observations": sharpe.observations,
+                "min": settings.sharpe_min,
+                "allows_new_entries": sharpe_ok,
+                "reason": sharpe_reason,
+            },
+        },
+        "entry_intent": None,
+        "entry_intent_unavailable_reason": "no option chain without an IB session",
+        "active_params": load_active_params(settings.params_active_path),
+    }
+
+
+def promotion_check(settings: Settings, history_path: str | Path) -> dict[str, Any]:
+    """The engine's promotion decision for one improvement history record.
+
+    The improvement CLI does not print its decision, so this asks
+    ``should_promote`` the same question. It decides only; it writes nothing.
+    """
+    record = json.loads(Path(history_path).read_text(encoding="utf-8"))
+    active = load_active_params(settings.params_active_path)
+    challenger_sharpe = record.get("best_sharpe")
+    decision = should_promote(
+        settings,
+        active,
+        SimpleNamespace(max_rolling_sharpe=challenger_sharpe),  # type: ignore[arg-type]
+    )
+    return {
+        "reason": decision.reason,
+        "would_promote": decision.promoted,
+        "challenger_sharpe": challenger_sharpe,
+        "active_sharpe": active.get("metrics", {}).get("sharpe_rolling"),
+        "sharpe_target": settings.backtest_sharpe_target,
+        "sharpe_margin": settings.improvement_sharpe_margin,
+    }
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Read-only engine state for hosts with no IB session")
+    parser.add_argument(
+        "--promotion-check",
+        metavar="HISTORY_JSON",
+        help="Print the promotion decision for this improvement history record instead of the state.",
+    )
+    args = parser.parse_args(argv)
+    settings = load_settings()
+    logging.basicConfig(stream=sys.stderr, level=getattr(logging, settings.log_level.upper(), logging.INFO))
+    if args.promotion_check:
+        print(json.dumps(promotion_check(settings, args.promotion_check), default=str))
+    else:
+        print(json.dumps(build_state(settings), default=str))
+
+
+if __name__ == "__main__":
+    main()
