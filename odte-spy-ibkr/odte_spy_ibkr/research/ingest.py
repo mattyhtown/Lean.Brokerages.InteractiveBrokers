@@ -29,6 +29,13 @@ ResearchSource = Literal[
 ]
 
 
+def resolve_ingest_sources(sources: list[ResearchSource] | None) -> list[ResearchSource]:
+    """Default to alpaca only when --source is omitted; do not merge default with explicit sources."""
+    if sources is None:
+        return ["alpaca"]
+    return list(sources)
+
+
 def log_credential_status(settings: Settings) -> dict[str, bool]:
     status = {
         "ALPACA_API_KEY": bool(settings.alpaca_api_key and settings.alpaca_api_secret),

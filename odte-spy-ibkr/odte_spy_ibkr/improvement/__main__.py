@@ -11,7 +11,7 @@ from odte_spy_ibkr.improvement.promoter import should_promote
 from odte_spy_ibkr.improvement.registry import load_active_params, save_active_params, write_history
 from odte_spy_ibkr.logging_utils import setup_logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("odte_spy_ibkr.improvement")
 
 
 def run_improvement() -> int:
@@ -45,9 +45,13 @@ def run_improvement() -> int:
         }
         active["promoted_at"] = history_payload["timestamp"]
         save_active_params(settings.params_active_path, active)
-        logger.info("Promoted candidate %s: %s", best.candidate.name, decision.reason)
+        message = f"Promoted candidate {best.candidate.name}: {decision.reason}"
+        logger.info("%s", message)
+        print(message)
     else:
-        logger.info("No promotion: %s", decision.reason)
+        message = f"No promotion: {decision.reason}"
+        logger.info("%s", message)
+        print(message)
     return 0
 
 

@@ -100,7 +100,7 @@ class Settings(BaseSettings):
 
     # Multi-provider market data
     providers_enabled: str = Field(
-        default="ibkr,unusual_whales,alpaca",
+        default="ibkr,unusual_whales,alpaca,macro_news,tradingeconomics",
         alias="PROVIDERS_ENABLED",
     )
 
