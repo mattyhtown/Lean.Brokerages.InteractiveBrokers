@@ -83,6 +83,45 @@ No live IB or UW connection required (mocked/fixture tests).
 - `providers/aggregate.py` — weighted merge
 - `runner.py` — builds `MarketContext` each loop before strategy
 - `strategy/flow_gate.py` — gates on aggregated context (+ macro risk-off)
+- `strategy/interface.py` — shared `propose_entry` / `manage_open` for live + backtest
+
+## Option chain skew (net calls)
+
+Each chain refresh builds `ChainSkewSnapshot` (`chain/skew.py`):
+
+- Aggregates call vs put volume/OI and premium-at-mid
+- `net_call_bias` ∈ [−1, 1] on `MarketContext`
+- Credit spread selection nets intended position: `MAX_NET_CALL_RISK` cap; auto side prefers put credit when skew is strongly bullish
+
+Live: IB chain → JSON cache under `data/cache/SPY/{date}.json`. Backtest reads the same JSON/parquet layout.
+
+## Historical backtest
+
+```bash
+pip install -e ".[dev,backtest]"
+python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --report-json reports/summary.json
+python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --require-rolling-sharpe 1.5
+```
+
+- Rolling Sharpe: 60d window, annualized `sqrt(252)*mean/std` on daily P&amp;L returns
+- Optional live `SHARPE_GATE_ENABLED` pauses new entries when rolling Sharpe &lt; `SHARPE_MIN` (default 1.5)
+- Macro news provider: Alpaca news cache + `config/macro_events.yaml` tier-1 blackout
+
+**Gaps:** UW history is cache-first (`UW_BACKTEST_CACHE_DIR`); synthetic chain used when Alpaca keys/history missing.
+
+## Continuous improvement
+
+```bash
+python -m odte_spy_ibkr.improvement run
+```
+
+Nightly-style loop: random/grid challengers → short backtest window → compare to `params/active.yaml` → write `params/history/{timestamp}.json`.
+
+Promotion rules (`IMPROVEMENT_AUTO_PROMOTE_PAPER=true` by default; live requires `IMPROVEMENT_AUTO_PROMOTE_LIVE=true`):
+
+- Challenger rolling Sharpe must beat active by `IMPROVEMENT_SHARPE_MARGIN`
+- Must meet `BACKTEST_SHARPE_TARGET` (1.5)
+- Never enables live orders by itself
 
 ## QuantConnect LEAN
 

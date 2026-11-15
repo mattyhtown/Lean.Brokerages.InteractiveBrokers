@@ -25,6 +25,10 @@ class GateResult:
 def resolved_credit_side(config_side: CreditSide, ctx: MarketContext) -> CreditSide:
     if config_side != CreditSide.AUTO:
         return config_side
+    if ctx.net_call_bias >= 0.35:
+        return CreditSide.PUT
+    if ctx.net_call_bias <= -0.35:
+        return CreditSide.CALL
     if ctx.flow_bias == FlowBias.BEARISH:
         return CreditSide.CALL
     return CreditSide.PUT

@@ -22,6 +22,23 @@ class CreditSide(str, Enum):
     AUTO = "auto"
 
 
+class MacroFlowConflict(str, Enum):
+    BLOCK = "block"
+    DOWNSIZE = "downsize"
+    IGNORE = "ignore"
+
+
+class UWBacktestMode(str, Enum):
+    SKIP = "skip"
+    NEUTRAL = "neutral"
+    BLOCK = "block"
+
+
+class MacroBacktestMode(str, Enum):
+    PERMISSIVE = "permissive"
+    STRICT = "strict"
+
+
 def _parse_time(value: str | time) -> time:
     if isinstance(value, time):
         return value
@@ -67,6 +84,8 @@ class Settings(BaseSettings):
     entry_cutoff: time = Field(default=time(15, 0), alias="ENTRY_CUTOFF")
     flatten_time: time = Field(default=time(15, 45), alias="FLATTEN_TIME")
     poll_interval_sec: float = Field(default=30.0, alias="POLL_INTERVAL_SEC")
+    max_net_call_risk: float = Field(default=50_000.0, alias="MAX_NET_CALL_RISK")
+    strong_bullish_skew: float = Field(default=0.55, alias="STRONG_BULLISH_SKEW")
 
     # Unusual Whales
     unusual_whales_api_key: str = Field(default="", alias="UNUSUAL_WHALES_API_KEY")
@@ -96,6 +115,47 @@ class Settings(BaseSettings):
     coinbase_risk_off_threshold_pct: float = Field(default=3.0, alias="COINBASE_RISK_OFF_THRESHOLD_PCT")
     coinbase_products: str = Field(default="BTC-USD,ETH-USD", alias="COINBASE_PRODUCTS")
 
+    # Macro news
+    macro_enabled: bool = Field(default=True, alias="MACRO_ENABLED")
+    macro_tier1_blackout_before_min: int = Field(default=30, alias="MACRO_BLACKOUT_BEFORE_MIN")
+    macro_tier1_blackout_after_min: int = Field(default=45, alias="MACRO_BLACKOUT_AFTER_MIN")
+    macro_headline_lookback_min: int = Field(default=60, alias="MACRO_HEADLINE_LOOKBACK_MIN")
+    macro_headline_intensity_block: float = Field(default=0.75, alias="MACRO_HEADLINE_INTENSITY_BLOCK")
+    macro_size_scale_under_stress: float = Field(default=0.5, alias="MACRO_SIZE_SCALE")
+    macro_flow_conflict: MacroFlowConflict = Field(default=MacroFlowConflict.DOWNSIZE, alias="MACRO_FLOW_CONFLICT")
+    macro_backtest_mode: MacroBacktestMode = Field(default=MacroBacktestMode.PERMISSIVE, alias="MACRO_BACKTEST_MODE")
+    macro_calendar_path: str = Field(default="config/macro_events.yaml", alias="MACRO_CALENDAR_PATH")
+    context_api_key: str = Field(default="", alias="CONTEXT_API_KEY")
+
+    # Sharpe gate (live)
+    sharpe_gate_enabled: bool = Field(default=False, alias="SHARPE_GATE_ENABLED")
+    sharpe_min: float = Field(default=1.5, alias="SHARPE_MIN")
+    sharpe_window_days: int = Field(default=60, alias="SHARPE_WINDOW_DAYS")
+    sharpe_min_obs: int = Field(default=60, alias="SHARPE_MIN_OBS")
+    journal_path: str = Field(default="data/journal/daily_pnl.jsonl", alias="JOURNAL_PATH")
+
+    # Backtest
+    backtest_equity_base: float = Field(default=100_000.0, alias="BACKTEST_EQUITY_BASE")
+    backtest_rolling_window_days: int = Field(default=60, alias="BACKTEST_ROLLING_WINDOW_DAYS")
+    backtest_sharpe_target: float = Field(default=1.5, alias="BACKTEST_SHARPE_TARGET")
+    backtest_slippage_ticks: float = Field(default=1.0, alias="BACKTEST_SLIPPAGE_TICKS")
+    backtest_commission_per_contract: float = Field(default=0.65, alias="BACKTEST_COMMISSION_PER_CONTRACT")
+    backtest_cache_dir: str = Field(default="data/cache", alias="BACKTEST_CACHE_DIR")
+    uw_backtest_cache_dir: str = Field(default="data/cache/uw", alias="UW_BACKTEST_CACHE_DIR")
+    uw_backtest_mode: UWBacktestMode = Field(default=UWBacktestMode.NEUTRAL, alias="UW_BACKTEST_MODE")
+    providers_backtest_enabled: str = Field(
+        default="alpaca,unusual_whales,macro_news",
+        alias="PROVIDERS_BACKTEST_ENABLED",
+    )
+
+    # Improvement engine
+    improvement_auto_promote_paper: bool = Field(default=True, alias="IMPROVEMENT_AUTO_PROMOTE_PAPER")
+    improvement_auto_promote_live: bool = Field(default=False, alias="IMPROVEMENT_AUTO_PROMOTE_LIVE")
+    improvement_sharpe_margin: float = Field(default=0.1, alias="IMPROVEMENT_SHARPE_MARGIN")
+    improvement_max_dd_penalty: float = Field(default=0.25, alias="IMPROVEMENT_MAX_DD_PENALTY")
+    params_active_path: str = Field(default="params/active.yaml", alias="PARAMS_ACTIVE_PATH")
+    params_history_dir: str = Field(default="params/history", alias="PARAMS_HISTORY_DIR")
+
     @property
     def providers_enabled_list(self) -> list[str]:
         return [p.strip().lower() for p in self.providers_enabled.split(",") if p.strip()]
@@ -115,7 +175,14 @@ class Settings(BaseSettings):
             return time(15, 0)
         return _parse_time(v)
 
-    @field_validator("credit_side", "uw_mode", mode="before")
+    @field_validator(
+        "credit_side",
+        "uw_mode",
+        "macro_flow_conflict",
+        "uw_backtest_mode",
+        "macro_backtest_mode",
+        mode="before",
+    )
     @classmethod
     def _enum_fields(cls, v: Any) -> Any:
         if v is None:
@@ -178,6 +245,28 @@ class Settings(BaseSettings):
             "coinbase": {
                 "risk_off_threshold_pct": "coinbase_risk_off_threshold_pct",
                 "products": "coinbase_products",
+            },
+            "macro": {
+                "enabled": "macro_enabled",
+                "tier1_blackout_before_min": "macro_tier1_blackout_before_min",
+                "tier1_blackout_after_min": "macro_tier1_blackout_after_min",
+                "headline_lookback_min": "macro_headline_lookback_min",
+                "headline_intensity_block": "macro_headline_intensity_block",
+                "size_scale_under_macro_stress": "macro_size_scale_under_stress",
+                "flow_conflict": "macro_flow_conflict",
+                "backtest_mode": "macro_backtest_mode",
+            },
+            "backtest": {
+                "equity_base": "backtest_equity_base",
+                "rolling_window_days": "backtest_rolling_window_days",
+                "sharpe_target": "backtest_sharpe_target",
+                "slippage_ticks": "backtest_slippage_ticks",
+                "commission_per_contract": "backtest_commission_per_contract",
+            },
+            "risk": {
+                "sharpe_gate_enabled": "sharpe_gate_enabled",
+                "sharpe_min": "sharpe_min",
+                "sharpe_window_days": "sharpe_window_days",
             },
         }
         for section, keys in mapping.items():

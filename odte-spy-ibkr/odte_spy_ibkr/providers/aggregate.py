@@ -95,6 +95,11 @@ def merge_deltas(
     flow_weight = 0.0
     vol_scores: list[tuple[VolRegime, float]] = []
     macro_flags: list[bool] = []
+    bias_num = 0.0
+    bias_den = 0.0
+    headline_scores: list[float] = []
+    blackout_flags: list[bool] = []
+    chain_skew = seed.chain_skew
     latest_as_of: datetime | None = seed.as_of
     notes = dict(seed.provider_notes)
     raw = dict(seed.raw_by_provider)
@@ -128,6 +133,17 @@ def merge_deltas(
             vol_scores.append((d.vol_regime, w))
         if d.macro_risk_off is not None:
             macro_flags.append(d.macro_risk_off)
+        if d.net_call_bias is not None:
+            w = d.net_call_bias_weight or wconf.get("chain_skew", 0.0)
+            if w > 0:
+                bias_num += d.net_call_bias * w
+                bias_den += w
+        if d.chain_skew is not None:
+            chain_skew = d.chain_skew
+        if d.macro_headline_score is not None:
+            headline_scores.append(d.macro_headline_score)
+        if d.macro_event_blackout is not None:
+            blackout_flags.append(d.macro_event_blackout)
         if d.as_of is not None:
             if latest_as_of is None or d.as_of > latest_as_of:
                 latest_as_of = d.as_of
@@ -155,6 +171,20 @@ def merge_deltas(
     if macro_flags:
         macro = any(macro_flags)
 
+    net_call_bias = seed.net_call_bias
+    if bias_den > 0:
+        net_call_bias = bias_num / bias_den
+    elif chain_skew is not None:
+        net_call_bias = chain_skew.net_call_bias
+
+    macro_headline = seed.macro_headline_score
+    if headline_scores:
+        macro_headline = max(headline_scores, key=abs)
+
+    macro_blackout = seed.macro_event_blackout
+    if blackout_flags:
+        macro_blackout = any(blackout_flags)
+
     return MarketContext(
         underlying=seed.underlying,
         spot=spot,
@@ -163,6 +193,11 @@ def merge_deltas(
         flow_strength=strength,
         vol_regime=vol_regime,
         macro_risk_off=macro,
+        net_call_bias=net_call_bias,
+        net_call_risk=seed.net_call_risk,
+        chain_skew=chain_skew,
+        macro_headline_score=macro_headline,
+        macro_event_blackout=macro_blackout,
         as_of=latest_as_of or datetime.now(tz=timezone.utc),
         provider_notes=notes,
         raw_by_provider=raw,

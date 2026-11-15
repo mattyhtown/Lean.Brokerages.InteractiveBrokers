@@ -39,3 +39,24 @@ alpaca:
 coinbase:
   products: BTC-USD,ETH-USD
   risk_off_threshold_pct: 3.0
+
+macro:
+  enabled: true
+  tier1_blackout_before_min: 30
+  tier1_blackout_after_min: 45
+  headline_intensity_block: 0.75
+  size_scale_under_macro_stress: 0.5
+  flow_conflict: downsize
+  backtest_mode: permissive
+
+backtest:
+  equity_base: 100000
+  rolling_window_days: 60
+  sharpe_target: 1.5
+  slippage_ticks: 1
+  commission_per_contract: 0.65
+
+risk:
+  sharpe_gate_enabled: false
+  sharpe_min: 1.5
+  sharpe_window_days: 60

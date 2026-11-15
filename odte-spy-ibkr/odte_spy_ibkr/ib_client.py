@@ -116,6 +116,10 @@ class IBSession:
                     delta=delta,
                     bid=float(ticker.bid) if ticker.bid and ticker.bid > 0 else None,
                     ask=float(ticker.ask) if ticker.ask and ticker.ask > 0 else None,
+                    volume=float(ticker.volume) if getattr(ticker, "volume", None) else None,
+                    open_interest=float(ticker.openInterest)
+                    if getattr(ticker, "openInterest", None)
+                    else None,
                 )
             )
         return filter_expiry(out, expiry)

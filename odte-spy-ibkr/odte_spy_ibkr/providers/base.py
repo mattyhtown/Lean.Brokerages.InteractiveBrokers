@@ -4,7 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from odte_spy_ibkr.chain.skew import ChainSkewSnapshot
 
 
 class FlowBias(str, Enum):
@@ -31,6 +34,11 @@ class MarketContext:
     flow_strength: float = 0.0
     vol_regime: VolRegime = VolRegime.UNKNOWN
     macro_risk_off: bool = False
+    net_call_bias: float = 0.0
+    net_call_risk: float = 0.0
+    chain_skew: ChainSkewSnapshot | None = None
+    macro_headline_score: float = 0.0
+    macro_event_blackout: bool = False
     as_of: datetime | None = None
     provider_notes: dict[str, str] = field(default_factory=dict)
     raw_by_provider: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -54,6 +62,11 @@ class MarketContextDelta:
     vol_regime: VolRegime | None = None
     vol_weight: float = 0.0
     macro_risk_off: bool | None = None
+    net_call_bias: float | None = None
+    net_call_bias_weight: float = 0.0
+    macro_headline_score: float | None = None
+    macro_event_blackout: bool | None = None
+    chain_skew: Any | None = None
     as_of: datetime | None = None
     note: str = ""
     raw: dict[str, Any] = field(default_factory=dict)

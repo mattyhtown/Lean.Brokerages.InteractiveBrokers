@@ -7,6 +7,7 @@ from odte_spy_ibkr.chain import (
     OptionCandidate,
     VerticalSpreadSelection,
     build_vertical_spread,
+    net_call_risk_within_limit,
     select_by_delta_band,
     select_by_otm_distance,
 )
@@ -54,6 +55,8 @@ def build_entry_plan(
     settings: Settings,
     ctx: MarketContext,
     candidates: Sequence[OptionCandidate],
+    *,
+    contracts: int = 1,
 ) -> EntryPlan | None:
     gate = evaluate_flow_gate(settings, ctx)
     if gate.decision == GateDecision.BLOCK:
@@ -64,6 +67,14 @@ def build_entry_plan(
         return None
 
     side = resolved_credit_side(settings.credit_side, ctx)
+    # Avoid call credit when chain skew is strongly bullish (net call pressure).
+    if (
+        side == CreditSide.CALL
+        and ctx.net_call_bias >= settings.strong_bullish_skew
+        and settings.credit_side == CreditSide.AUTO
+    ):
+        side = CreditSide.PUT
+
     right = "P" if side == CreditSide.PUT else "C"
     short = choose_short_leg(settings, candidates, right=right, spot=spot)
     if short is None:
@@ -73,6 +84,12 @@ def build_entry_plan(
     if spread is None:
         return None
     if spread.estimated_credit is not None and spread.estimated_credit < settings.min_credit:
+        return None
+    if not net_call_risk_within_limit(
+        spread,
+        max_net_call_risk=settings.max_net_call_risk,
+        contracts=contracts,
+    ):
         return None
 
     if gate.decision == GateDecision.LOG_ONLY and settings.uw_mode == UWMode.GATE:

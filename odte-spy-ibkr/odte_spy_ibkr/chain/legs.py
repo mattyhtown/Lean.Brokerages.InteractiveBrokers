@@ -16,6 +16,8 @@ class OptionCandidate:
     delta: float | None = None
     bid: float | None = None
     ask: float | None = None
+    volume: float | None = None
+    open_interest: float | None = None
 
     @property
     def mid(self) -> float | None:
@@ -107,6 +109,29 @@ def build_vertical_spread(
         width=width,
         estimated_credit=credit,
     )
+
+
+def net_call_risk_notional(
+    spread: VerticalSpreadSelection,
+    *,
+    contracts: int = 1,
+    spot: float | None = None,
+) -> float:
+    """Short-call-equivalent notional after intended spread (USD proxy)."""
+    mult = 100.0 * max(1, contracts)
+    if spread.short_leg.right == "C":
+        return mult * spread.width
+    # Put credit: defined-risk bullish structure lowers short-call pressure.
+    return -0.25 * mult * spread.width
+
+
+def net_call_risk_within_limit(
+    spread: VerticalSpreadSelection,
+    *,
+    max_net_call_risk: float,
+    contracts: int = 1,
+) -> bool:
+    return net_call_risk_notional(spread, contracts=contracts) <= max_net_call_risk
 
 
 def chain_snapshot_timestamp() -> datetime:
