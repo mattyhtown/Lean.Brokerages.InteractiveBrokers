@@ -58,6 +58,7 @@ These providers publish hosted MCP endpoints. None is connected or listed in thi
 | Moomoo | `https://mcp.moomoo.com/mcp` | 401 "missing Bearer token". OAuth sign-in with a moomoo account; scopes `quote:read`, `quote:write`, `trade:read`, `trade:write`. Granting `trade:write` lets the agent place and cancel orders. |
 | Tradier | `https://mcp.tradier.com/mcp` | Succeeds and lists 21 tools, including six order-placement tools. A data call returned "API key is required but not provided (via JWT or API_KEY header)", so it needs a Tradier sign-in or API token. |
 | Seeking Alpha | `https://seekingalpha.com/mcp` | 401 "Authentication required". OAuth sign-in with scope `mcp:pro_mcp`. Seeking Alpha's help center says it is for PRO subscribers only and provides Quant, Analyst and Factor grades. |
+| Bloomberg | `https://mcp.bloomberg.com/mcp` | 401 "No definition of jwt found in header or query string". Its resource metadata names `https://bsso.blpprofessional.com` (Bloomberg sign-in) as the authorization server. Bloomberg describes Enterprise MCP as part of Data License Plus, a licensed enterprise data product; whether this host is that service was not confirmed. No tool list was returned, so its news coverage is unknown. |
 
 No hosted MCP endpoint was checked for Zacks, TipRanks, stockanalysis.com or Yahoo Finance. Until a server is connected, use the direct HTTP table in the instrument-router skill.
 
