@@ -517,6 +517,9 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
                     text = f"[refusal: {refusal.strip()}]"
                 elif isinstance(msg.get("content"), str):
                     text = msg["content"].strip()
+            # A model that reasons first can spend the whole budget before it writes anything.
+            if not text and first.get("finish_reason") == "length":
+                text = "[incomplete: max_tokens was reached before any text was returned]"
     return ChatResponse(spec.name, str(data.get("model") or model), text, data)
 
 

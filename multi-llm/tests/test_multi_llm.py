@@ -432,6 +432,21 @@ def test_retired_endpoints_are_not_registered(retired: str) -> None:
         get_provider(retired)
 
 
+def test_chat_reply_cut_off_before_any_text_is_reported() -> None:
+    def reply(message: dict[str, object], finish_reason: str) -> str:
+        return complete(
+            ChatRequest(provider="minimax", prompt="Hi"),
+            env={"MINIMAX_API_KEY": "token-xyz"},
+            transport=lambda _u, _h, _b, _t: {"choices": [{"message": message, "finish_reason": finish_reason}]},
+        ).text
+
+    cut_off = "[incomplete: max_tokens was reached before any text was returned]"
+    assert reply({"role": "assistant", "content": "", "reasoning_content": "Thinking"}, "length") == cut_off
+    assert reply({"role": "assistant", "content": None}, "length") == cut_off
+    assert reply({"role": "assistant", "content": "Partial ans"}, "length") == "Partial ans"
+    assert reply({"role": "assistant", "content": ""}, "stop") == ""
+
+
 def test_openai_refusal_content_part_is_returned() -> None:
     def reply(content: list[object]) -> str:
         return complete(

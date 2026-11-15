@@ -79,4 +79,6 @@ poetry run multi-llm chat --provider watsonx --prompt "Summarize today's macro r
 export MINIMAX_BASE_URL=https://api.minimax.cn/v1
 ```
 
+The model reasons before it answers and MiniMax counts that reasoning against `--max-tokens`. If the reply is `[incomplete: max_tokens was reached before any text was returned]`, raise `--max-tokens` above the default of 1024.
+
 Aliases: `claude`, `gpt`, `chatgpt`, `grok`, `kimi`, `qwen`, `glm`, `hf`, `vllm`, `lmstudio`, `vertex`, `snowflake`, etc. (`poetry run multi-llm chat --provider kimi` → Moonshot).
