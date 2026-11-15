@@ -396,6 +396,25 @@ def test_minimax_group_id_is_not_an_api_key() -> None:
         build_wire_request(ChatRequest(provider="minimax", prompt="Hi"), env=env)
 
 
+def test_openai_refusal_content_part_is_returned() -> None:
+    def reply(content: list[object]) -> str:
+        return complete(
+            ChatRequest(provider="openai", prompt="Hi"),
+            env={"OPENAI_API_KEY": "sk-test"},
+            transport=lambda _u, _h, _b, _t: {
+                "model": "gpt-4.1",
+                "status": "completed",
+                "output": [{"type": "message", "status": "completed", "role": "assistant", "content": content}],
+            },
+        ).text
+
+    assert reply([{"type": "refusal", "refusal": " I can't help with that. "}]) == "[refusal: I can't help with that.]"
+    assert reply(
+        [{"type": "output_text", "text": "Here is part."}, {"type": "refusal", "refusal": "Not the rest."}]
+    ) == "Here is part.\n[refusal: Not the rest.]"
+    assert reply([{"type": "refusal", "refusal": ""}, {"type": "output_text", "text": "Fine."}]) == "Fine."
+
+
 def test_openai_mcp_approval_request_is_surfaced() -> None:
     def fake_transport(_u: str, _h: dict[str, str], _b: dict[str, object], _t: int) -> dict[str, object]:
         return {

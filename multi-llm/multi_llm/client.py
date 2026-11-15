@@ -432,16 +432,17 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
             for item in output_items:
                 if not isinstance(item, dict):
                     continue
-                if item.get("type") == "message" and item.get("status") == "refusal":
-                    refusal = item.get("refusal")
-                    if isinstance(refusal, str) and refusal.strip():
-                        parts.append(f"[refusal: {refusal.strip()}]")
                 if item.get("type") == "mcp_approval_request":
                     parts.append(_mcp_approval_notice(item))
                 content = item.get("content")
                 if isinstance(content, list):
                     for chunk in content:
-                        if isinstance(chunk, dict) and isinstance(chunk.get("text"), str):
+                        if not isinstance(chunk, dict):
+                            continue
+                        refusal = chunk.get("refusal")
+                        if chunk.get("type") == "refusal" and isinstance(refusal, str) and refusal.strip():
+                            parts.append(f"[refusal: {refusal.strip()}]")
+                        elif isinstance(chunk.get("text"), str):
                             parts.append(chunk["text"])
         return ChatResponse(spec.name, str(data.get("model") or model), "\n".join(parts).strip(), data)
 
