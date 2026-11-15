@@ -10,7 +10,7 @@ Builds the training dataset for a signal model that predicts forward equity retu
 | `news` | Perplexity `sonar`, asked once per watchlist symbol for the last 24 hours of news | `newsletters` rows with `source = 'perplexity'` and one passage per news item |
 | `score` | Passages with no sentiment yet, from either source | FinBERT label and positive / neutral / negative scores on each passage |
 | `prices` | Databento `EQUS.SUMMARY` daily bars for every watchlist symbol and every mentioned ticker | `daily_prices` |
-| `options` | ORATS end-of-day core data for the same symbols | `options_daily` |
+| `options` | ORATS end-of-day core data for the same symbols, one trade date at a time | `options_daily` |
 
 The `training_rows` view joins them into one row per ticker and trading day:
 
@@ -38,7 +38,7 @@ Every step can be run again over the same dates without creating duplicates.
 | `HF_TOKEN` | `score`, unless run with `--finbert local` | A Hugging Face token with Inference Providers permission |
 | `DATABENTO_API_KEY` | `prices` | A Databento API key. Downloads are billed to it by data volume. |
 | `PERPLEXITY_API_KEY` | `news` | A Perplexity API key. Each symbol costs one `sonar` request per day. |
-| `ORATS_API_TOKEN` | `options` | An ORATS Data API token. Each 10 symbols cost one request per run. |
+| `ORATS_API_TOKEN` | `options` | An ORATS Data API token. Each weekday loaded costs one request per 10 symbols. |
 
 ## Run
 
