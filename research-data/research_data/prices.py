@@ -64,6 +64,13 @@ def available_end(api_key: str, http: HttpCallable = send) -> str:
     return end
 
 
+def _whole_number(value: object) -> int:
+    # int() would silently cut 1.9 down to 1.
+    if isinstance(value, (bool, float)):
+        raise ValueError(value)
+    return int(value)
+
+
 def parse_bars(body: bytes) -> tuple[list[DailyBar], int]:
     """Parse JSON-lines daily bars; also returns how many bars were dropped for missing prices."""
     bars: list[DailyBar] = []
@@ -73,10 +80,12 @@ def parse_bars(body: bytes) -> tuple[list[DailyBar], int]:
             continue
         try:
             record = json.loads(line)
-            raw_prices = [int(record[name]) for name in ("open", "high", "low", "close")]
-            trade_date = datetime.fromtimestamp(int(record["hd"]["ts_event"]) // 10**9, tz=timezone.utc).date()
+            raw_prices = [_whole_number(record[name]) for name in ("open", "high", "low", "close")]
+            trade_date = datetime.fromtimestamp(
+                _whole_number(record["hd"]["ts_event"]) // 10**9, tz=timezone.utc
+            ).date()
             symbol = record["symbol"]
-            volume = int(record["volume"])
+            volume = _whole_number(record["volume"])
         except (ValueError, KeyError, TypeError):
             raise LoaderError(f"Unexpected Databento {SCHEMA} record: {line[:200]}") from None
         if not isinstance(symbol, str) or not symbol:
