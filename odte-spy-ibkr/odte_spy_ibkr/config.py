@@ -156,6 +156,8 @@ class Settings(BaseSettings):
     improvement_auto_promote_live: bool = Field(default=False, alias="IMPROVEMENT_AUTO_PROMOTE_LIVE")
     improvement_sharpe_margin: float = Field(default=0.1, alias="IMPROVEMENT_SHARPE_MARGIN")
     improvement_max_dd_penalty: float = Field(default=0.25, alias="IMPROVEMENT_MAX_DD_PENALTY")
+    alpha_scored_entry_enabled: bool = Field(default=False, alias="ALPHA_SCORED_ENTRY_ENABLED")
+    alpha_min_score: float = Field(default=0.15, alias="ALPHA_MIN_SCORE")
     params_active_path: str = Field(default="params/active.yaml", alias="PARAMS_ACTIVE_PATH")
     params_history_dir: str = Field(default="params/history", alias="PARAMS_HISTORY_DIR")
 
