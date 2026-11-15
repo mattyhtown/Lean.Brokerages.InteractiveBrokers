@@ -7,11 +7,21 @@ export default defineTool({
   description: prompt`
     Run the walk-forward feature evaluation with a final holdout
     (python -m odte_spy_ibkr.research evaluate) on the research cache and
-    return its Markdown report. Fails when the cache has too few real
-    minute-bar sessions.
+    return its Markdown report. Run 2 (the default) uses the holdout the
+    engine fixed in advance; run 1 uses the last holdoutDays sessions, a
+    holdout the research log already counts as spent. Every evaluation
+    looks at a holdout, so do not repeat it to hunt for a better result.
+    Fails when the cache has too few real minute-bar sessions.
   `,
   inputSchema: z.object({
-    holdoutDays: z.number().int().min(1).max(120).default(20),
+    run: z.union([z.literal(1), z.literal(2)]).default(2),
+    holdoutDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(120)
+      .optional()
+      .describe("Run 1 only. The engine default is 8."),
   }),
   effect: "read",
   async execute(input) {

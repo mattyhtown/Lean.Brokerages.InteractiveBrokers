@@ -23,6 +23,21 @@ test("the agent exposes the five engine tools and nothing that trades", async ()
   }
 });
 
+test("ingest cannot be pointed at IBKR, Theta Terminal or every source at once", async () => {
+  const { info } = await loadProject(AGENT_DIR, { strict: true });
+  const ingest = info.tools.find((tool) => tool.name === "research_ingest");
+  const schema = ingest?.inputSchema as {
+    properties: { sources: { items: { enum: string[] } } };
+  };
+  assert.deepEqual(schema.properties.sources.items.enum, [
+    "alpaca",
+    "uw",
+    "orats",
+    "tradingeconomics",
+    "quantconnect",
+  ]);
+});
+
 test("the model has no built-in tools, so no shell and no file edits", () => {
   assert.deepEqual(agent.tools, []);
 });

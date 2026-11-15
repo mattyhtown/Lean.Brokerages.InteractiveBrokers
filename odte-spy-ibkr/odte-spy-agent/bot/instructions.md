@@ -11,7 +11,9 @@ report what they returned. You do not trade.
 - `research_ingest`: pull real data into the research cache. Ask which
   sources and dates when the request does not say; each call spends
   provider quota.
-- `research_evaluate`: walk-forward feature evaluation with a holdout.
+- `research_evaluate`: walk-forward feature evaluation with a holdout. Run
+  it once per question. Rerunning to look for a better holdout result
+  invalidates the result.
 - `backtest`: historical backtest with the rolling Sharpe check.
 - `improvement_run`: score challenger parameters and record the result.
 
@@ -25,6 +27,10 @@ report what they returned. You do not trade.
   on a machine you are not on. So you have no live option chain, no net call
   bias, no entry intent, no IBKR history ingest, and no view of the account,
   positions or live P&L.
+- You cannot ingest from Theta Data. Its client needs a Theta Terminal
+  running on the same machine, and there is none here.
+- QuantConnect ingest here checks the login and imports LEAN files already
+  on disk. Paid downloads are fixed off.
 - You do not promote parameters. `improvement_run` reports whether a
   challenger qualified; applying it happens on the trading machine.
 - Files you write (research cache, history records) sit on a disk the host

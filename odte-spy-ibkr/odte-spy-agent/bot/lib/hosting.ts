@@ -11,10 +11,13 @@ export const SECRET_NAMES = [
   "QUANTCONNECT_API_TOKEN",
 ] as const;
 
-// Hosts the engine code on this branch calls. Theta Data, Trading Economics
-// and QuantConnect have no client code here yet, so their hosts are not listed.
+// Every outbound host the exposed engine jobs call. Theta Data is absent on
+// purpose: its client talks to a Theta Terminal on 127.0.0.1, which a hosted
+// agent does not have.
 export const EGRESS_DOMAINS = [
   "api.unusualwhales.com",
   "data.alpaca.markets",
   "api.orats.io",
+  "api.tradingeconomics.com",
+  "www.quantconnect.com",
 ];

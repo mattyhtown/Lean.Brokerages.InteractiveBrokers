@@ -47,6 +47,8 @@ export const FORCED_ENV: Record<string, string> = {
   // A promotion would rewrite params/active.yaml on a disk the hosting
   // platform can replace at any time, so the hosted run only reports.
   IMPROVEMENT_AUTO_PROMOTE_PAPER: "false",
+  // `lean data download --yes` buys files with the organization's QCC balance.
+  QUANTCONNECT_ALLOW_PAID_DOWNLOAD: "false",
   CONFIG_YAML: SAFETY_YAML_PATH,
   PYTHONUNBUFFERED: "1",
 };

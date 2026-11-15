@@ -58,7 +58,7 @@ test("research_ingest runs the research CLI and summarizes what it wrote", async
     JSON.stringify(
       {
         alpaca: { daily: "data/research/alpaca/spy_daily.json", "2026-11-02": "a.json" },
-        uw: { "2026-11-02": "u.json" },
+        uw: { days_flow: 2, days_chain: 0, errors: [] },
       },
       null,
       2,
@@ -84,10 +84,29 @@ test("research_ingest runs the research CLI and summarizes what it wrote", async
   // What ran comes from the engine's output, not from what was asked for.
   assert.deepEqual(result.sourcesRequested, ["uw"]);
   assert.deepEqual(result.sourcesRun, ["alpaca", "uw"]);
-  assert.deepEqual(
-    result.sources.map((entry) => entry.fileCount),
-    [2, 1],
+  assert.deepEqual(result.sources[0], {
+    source: "alpaca",
+    entryCount: 2,
+    summary: { daily: "data/research/alpaca/spy_daily.json", "2026-11-02": "a.json" },
+    summaryTruncated: false,
+  });
+  // A stats object is passed through as the engine reported it.
+  assert.deepEqual(result.sources[1]?.summary, { days_flow: 2, days_chain: 0, errors: [] });
+});
+
+test("research_ingest caps a long path map", async () => {
+  const paths = Object.fromEntries(
+    Array.from({ length: 40 }, (_, i) => [`2026-09-${String(i + 1).padStart(2, "0")}`, `m${i}.json`]),
   );
+  const result = await researchIngest(
+    { sources: ["alpaca"], days: 60 },
+    deps(() => ({ stdout: JSON.stringify({ alpaca: paths }, null, 2) })),
+  );
+  assert.deepEqual(calls[0]?.args, ["ingest", "--source", "alpaca", "--days", "60"]);
+  assert.ok(result.ok);
+  assert.equal(result.sources[0]?.entryCount, 40);
+  assert.equal(Object.keys(result.sources[0]?.summary ?? {}).length, 12);
+  assert.equal(result.sources[0]?.summaryTruncated, true);
 });
 
 test("research_ingest reports a missing credential as a failure with the log tail", async () => {
@@ -122,23 +141,40 @@ test("a job killed at its time limit is reported as a timeout", async () => {
   assert.equal(result.error, "timeout");
 });
 
-test("research_evaluate returns the report the engine wrote", async () => {
+test("research_evaluate defaults to the engine's fixed run-2 holdout", async () => {
   const result = await researchEvaluate(
-    { holdoutDays: 8 },
+    { run: 2, holdoutDays: 30 },
     deps(async (request) => {
       await writeFile(argAfter(request, "--report"), "# Research\nno holdout survivor\n");
       return {};
     }),
   );
-  assert.deepEqual(calls[0]?.args.slice(0, 3), ["evaluate", "--holdout-days", "8"]);
+  // --holdout-days is not sent for run 2: the engine would ignore it.
+  assert.deepEqual(calls[0]?.args.slice(0, 3), ["evaluate", "--run", "2"]);
+  assert.ok(!calls[0]?.args.includes("--holdout-days"));
   assert.ok(result.ok);
+  assert.equal(result.run, 2);
+  assert.equal(result.holdoutDays, null);
   assert.match(result.reportMarkdown, /no holdout survivor/);
   assert.equal(result.reportTruncated, false);
 });
 
+test("research_evaluate passes the tail holdout size for run 1", async () => {
+  const result = await researchEvaluate(
+    { run: 1, holdoutDays: 8 },
+    deps(async (request) => {
+      await writeFile(argAfter(request, "--report"), "# Research\n");
+      return {};
+    }),
+  );
+  assert.deepEqual(calls[0]?.args.slice(0, 5), ["evaluate", "--run", "1", "--holdout-days", "8"]);
+  assert.ok(result.ok);
+  assert.equal(result.holdoutDays, 8);
+});
+
 test("research_evaluate fails when the cache is too thin for the engine to run", async () => {
   const result = await researchEvaluate(
-    { holdoutDays: 20 },
+    { run: 2 },
     deps(() => ({ exitCode: 1, stderr: "RuntimeError: Insufficient real minute-bar cache" })),
   );
   assert.ok(!result.ok);

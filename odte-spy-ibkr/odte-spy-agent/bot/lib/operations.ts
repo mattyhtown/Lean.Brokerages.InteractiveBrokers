@@ -35,7 +35,7 @@ type Failure = {
 const LOG_TAIL_LINES = 40;
 const MAX_REPORT_CHARS = 20_000;
 const MAX_SESSIONS = 60;
-const MAX_PATHS_PER_SOURCE = 5;
+const MAX_SUMMARY_ENTRIES = 12;
 
 function tail(text: string, lines = LOG_TAIL_LINES): string[] {
   return text
@@ -113,7 +113,7 @@ async function listIfExists(dir: string): Promise<string[]> {
   }
 }
 
-export type IngestSource = "alpaca" | "uw" | "orats";
+export type IngestSource = "alpaca" | "uw" | "orats" | "tradingeconomics" | "quantconnect";
 
 export type ResearchIngestInput = {
   sources: IngestSource[];
@@ -145,12 +145,19 @@ export async function researchIngest(input: ResearchIngestInput, deps = defaultD
   if (written === null) {
     return failure(run, "bad_engine_output", "ingest exited 0 without the JSON path summary");
   }
-  const sources = Object.entries(written).map(([source, paths]) => {
-    const files =
-      typeof paths === "object" && paths !== null && !Array.isArray(paths)
-        ? Object.values(paths).map(String)
+  // Sources report differently: alpaca and orats return a date -> path map,
+  // the others a stats object. Pass either through, capped.
+  const sources = Object.entries(written).map(([source, value]) => {
+    const entries =
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? Object.entries(value)
         : [];
-    return { source, fileCount: files.length, sampleFiles: files.slice(0, MAX_PATHS_PER_SOURCE) };
+    return {
+      source,
+      entryCount: entries.length,
+      summary: Object.fromEntries(entries.slice(0, MAX_SUMMARY_ENTRIES)) as Record<string, Json>,
+      summaryTruncated: entries.length > MAX_SUMMARY_ENTRIES,
+    };
   });
   return {
     ok: true as const,
@@ -161,14 +168,21 @@ export async function researchIngest(input: ResearchIngestInput, deps = defaultD
   };
 }
 
-export type ResearchEvaluateInput = { holdoutDays: number };
+export type ResearchEvaluateInput = { run: 1 | 2; holdoutDays?: number };
 
 export async function researchEvaluate(input: ResearchEvaluateInput, deps = defaultDeps()) {
   return withTempDir(async (dir) => {
     const reportPath = path.join(dir, "research-report.md");
+    // The engine ignores --holdout-days for run 2, whose holdout is fixed.
+    const holdoutDays = input.run === 1 ? (input.holdoutDays ?? null) : null;
+    const args = ["evaluate", "--run", String(input.run)];
+    if (holdoutDays !== null) {
+      args.push("--holdout-days", String(holdoutDays));
+    }
+    args.push("--report", reportPath);
     const run = await deps.run({
       module: "odte_spy_ibkr.research",
-      args: ["evaluate", "--holdout-days", String(input.holdoutDays), "--report", reportPath],
+      args,
       timeoutMs: 5 * 60_000,
     });
     if (run.exitCode !== 0) {
@@ -180,7 +194,8 @@ export async function researchEvaluate(input: ResearchEvaluateInput, deps = defa
     }
     return {
       ok: true as const,
-      holdoutDays: input.holdoutDays,
+      run: input.run,
+      holdoutDays,
       reportMarkdown: report.slice(0, MAX_REPORT_CHARS),
       reportTruncated: report.length > MAX_REPORT_CHARS,
     };
