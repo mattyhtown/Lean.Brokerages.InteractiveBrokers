@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "qc-research-data"
 version = "0.1.0"
-description = "Loads newsletters, news digests, FinBERT sentiment, daily prices and options metrics into Supabase as a model-training dataset"
+description = "Loads newsletters, news digests, FinBERT sentiment, daily prices, options metrics and split and dividend factors into Supabase as a model-training dataset"
 authors = ["QuantConnect IB Workspace Contributors"]
 readme = "README.md"
 packages = [{ include = "research_data" }]

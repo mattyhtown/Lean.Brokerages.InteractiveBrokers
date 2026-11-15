@@ -1,6 +1,6 @@
 # research-data
 
-Builds the training dataset for a signal model that predicts forward equity returns: Substack newsletters from Gmail, daily news digests from Perplexity, FinBERT sentiment on both, daily options metrics from ORATS, and daily prices from Databento, all stored in Supabase.
+Builds the training dataset for a signal model that predicts forward equity returns: Substack newsletters from Gmail, daily news digests from Perplexity, FinBERT sentiment on both, daily options metrics from ORATS, daily prices from Databento, and split and dividend factors from QuantConnect, all stored in Supabase.
 
 ## What it loads
 
@@ -11,6 +11,7 @@ Builds the training dataset for a signal model that predicts forward equity retu
 | `score` | Passages with no sentiment yet, from either source | FinBERT label and positive / neutral / negative scores on each passage |
 | `prices` | Databento `EQUS.SUMMARY` daily bars for every watchlist symbol and every mentioned ticker | `daily_prices` |
 | `options` | ORATS end-of-day core data for the same symbols, one trade date at a time | `options_daily` |
+| `adjustments` | QuantConnect's split and dividend factor files for the same symbols, from a LEAN data folder on this machine | `price_adjustments` |
 
 The `training_rows` view joins them into one row per ticker and trading day:
 
@@ -19,13 +20,14 @@ The `training_rows` view joins them into one row per ticker and trading day:
 | `passage_count`, `newsletter_count`, `sentiment_positive`, `sentiment_neutral`, `sentiment_negative`, `sentiment_net` | Newsletters |
 | `news_item_count`, `news_sentiment_positive`, `news_sentiment_neutral`, `news_sentiment_negative`, `news_sentiment_net` | Perplexity news digests |
 | `iv_30d`, `iv_percentile_1y`, `hv_20d`, `skew_slope`, `contango`, `call_volume`, `put_volume`, `call_open_interest`, `put_open_interest` | ORATS |
-| `close`, `forward_return_1d`, `forward_return_5d` | Databento |
+| `close` | Databento |
+| `forward_return_1d`, `forward_return_5d`, `returns_adjusted` | Databento closes, adjusted with QuantConnect's factors |
 
 Every step can be run again over the same dates without creating duplicates.
 
 ## Setup
 
-1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project set up before options and news were added only needs `002_options_and_news.sql`.
+1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project that already has the earlier files only needs the ones added since; `003_price_adjustments.sql` is the newest.
 2. Edit `watchlist.txt` to the symbols and company names you want to track.
 3. Set these environment variables:
 
@@ -39,6 +41,7 @@ Every step can be run again over the same dates without creating duplicates.
 | `DATABENTO_API_KEY` | `prices` | A Databento API key. Downloads are billed to it by data volume. |
 | `PERPLEXITY_API_KEY` | `news` | A Perplexity API key. Each symbol costs one `sonar` request per day. |
 | `ORATS_API_TOKEN` | `options` | An ORATS Data API token. Each weekday loaded costs one request per 10 symbols. |
+| `QUANTCONNECT_LEAN_DATA_DIR` | `adjustments` | The LEAN data folder that holds `equity/usa/factor_files/`. See below. |
 
 ## Run
 
@@ -47,7 +50,7 @@ poetry install
 poetry run research-data all
 ```
 
-`all` runs every step in the order of the table above over the last 7 days, which suits a daily schedule. It leaves out `news` when `PERPLEXITY_API_KEY` is not set and `options` when `ORATS_API_TOKEN` is not set, and says so. To backfill:
+`all` runs every step in the order of the table above over the last 7 days, which suits a daily schedule. It leaves out `news` when `PERPLEXITY_API_KEY` is not set, `options` when `ORATS_API_TOKEN` is not set, and `adjustments` when `QUANTCONNECT_LEAN_DATA_DIR` is not set, and says so. To backfill:
 
 ```bash
 poetry run research-data newsletters --since 2026-01-01
@@ -59,6 +62,17 @@ poetry run research-data options --start 2025-10-01
 News cannot be backfilled: a digest is what Perplexity found at the moment it was asked, so `news` only ever collects today's. Run it every day you want covered, at about the same time. A second run on the same New York calendar day skips the symbols that already have a digest.
 
 `score` saves each result as it arrives, so a run that stops partway resumes from the next unscored passage.
+
+## Split and dividend factors from QuantConnect
+
+`adjustments` reads files that are already on this machine. It does not call QuantConnect and cannot spend anything on your account. The files come from QuantConnect's US Equity Security Master dataset, which needs a paid subscription to download. Fetch them with the [LEAN CLI](https://www.quantconnect.com/docs/v2/lean-cli):
+
+```bash
+lean data download --dataset "US Equity Security Master"
+poetry run research-data adjustments
+```
+
+The download adds one `factor_files_YYYYMMDD.zip` per day to `equity/usa/factor_files/` in the LEAN data folder. `adjustments` uses the newest one and replaces each symbol's stored factors with it. Download again before each run: a row's returns are only marked as adjusted when the factor files are at least as new as the last close those returns use.
 
 ## Scoring on your own machine
 
@@ -81,10 +95,12 @@ It also works with `all`. The extra installs PyTorch and Transformers, about 5 G
 - **Options.** A row carries the ORATS metrics for its own trading day. ORATS takes its end-of-day snapshot about 14 minutes before the close, so those values exist before the close the row is paired with. `options_daily.source_updated_at` holds ORATS's own timestamp for each row.
 - **Trading days.** The calendar is every date on which any symbol has a loaded close.
 - **Returns.** `forward_return_1d` and `forward_return_5d` run from that close to the close 1 and 5 trading days later. They are null until those days are loaded, and stay null if the symbol has no bar on that day.
+- **Adjustments.** Both closes are scaled by QuantConnect's price and split factors before the return is taken, so a split or dividend between them does not show up as a price move. `returns_adjusted` is true when the symbol has factors dated on or after the last close the row's returns use. `close` is the raw Databento close.
 
 ## Limits to know before training
 
-- Prices are unadjusted. A split or large dividend shows up as a false return across that date; exclude or adjust those rows.
+- A row with `returns_adjusted` false may have a split or dividend inside its returns that was not removed. That covers every row until `adjustments` has run, symbols QuantConnect has no factor file for, and the newest days until newer factor files are loaded. Train on the rows where it is true.
+- Factors are matched by today's ticker. A company that changed its ticker has no factors under the old one.
 - On early-close days (13:00 New York), a newsletter or news digest that arrives between 13:00 and 16:00 is paired with that day's close even though the close has already happened.
 - News sentiment is FinBERT's reading of sentences Perplexity wrote, not of the original articles, and the same question can be answered differently on another run.
 - News history starts on the first day `news` ran. Earlier rows have `news_item_count` 0 because nothing was collected, not because there was no news.
