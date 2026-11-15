@@ -166,6 +166,9 @@ def test_gemini_uses_header_not_query_param() -> None:
         ("perplexity", "PERPLEXITY_API_KEY", "https://api.perplexity.ai/chat/completions"),
         ("cerebras", "CEREBRAS_API_KEY", "https://api.cerebras.ai/v1/chat/completions"),
         ("openrouter", "OPENROUTER_API_KEY", "https://openrouter.ai/api/v1/chat/completions"),
+        ("friendli", "FRIENDLI_API_KEY", "https://api.friendli.ai/serverless/v1/chat/completions"),
+        ("hyperbolic", "HYPERBOLIC_API_KEY", "https://api.hyperbolic.ai/inference/v1/chat/completions"),
+        ("minimax", "MINIMAX_API_KEY", "https://api.minimax.io/v1/chat/completions"),
     ],
 )
 def test_openai_compatible_cloud_providers(provider: str, env_var: str, expected_host: str) -> None:
@@ -394,6 +397,23 @@ def test_minimax_group_id_is_not_an_api_key() -> None:
     assert by_name["minimax"]["configured"] is False
     with pytest.raises(LLMError, match="MINIMAX_API_KEY"):
         build_wire_request(ChatRequest(provider="minimax", prompt="Hi"), env=env)
+
+
+def test_minimax_base_url_can_point_at_the_mainland_host() -> None:
+    env = {"MINIMAX_API_KEY": "token-xyz", "MINIMAX_BASE_URL": "https://api.minimax.cn/v1/"}
+    _, url, headers, body, _ = build_wire_request(ChatRequest(provider="minimax", prompt="Hi"), env=env)
+    assert url == "https://api.minimax.cn/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer token-xyz"
+    assert body["model"] == "MiniMax-M3.1-Flash"
+    without_key = {"MINIMAX_BASE_URL": "https://api.minimax.cn/v1"}
+    by_name = {row["provider"]: row for row in list_provider_statuses(env=without_key)}
+    assert by_name["minimax"]["configured"] is False
+
+
+@pytest.mark.parametrize("retired", ["anyscale", "lambda"])
+def test_retired_endpoints_are_not_registered(retired: str) -> None:
+    with pytest.raises(ValueError, match="Unknown provider"):
+        get_provider(retired)
 
 
 def test_openai_refusal_content_part_is_returned() -> None:

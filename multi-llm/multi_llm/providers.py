@@ -104,7 +104,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "fireworks": _chat(
         "fireworks",
         "Fireworks AI",
-        "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        "accounts/fireworks/models/glm-5p3-flash",
         "https://api.fireworks.ai/inference/v1",
         "FIREWORKS_API_KEY",
     ),
@@ -128,7 +128,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "nvidia_nim": _chat(
         "nvidia_nim",
         "NVIDIA NIM",
-        "meta/llama-3.1-70b-instruct",
+        "nvidia/nemotron-3-super-120b-a12b",
         "https://integrate.api.nvidia.com/v1",
         "NVIDIA_API_KEY",
     ),
@@ -142,29 +142,15 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "deepinfra": _chat(
         "deepinfra",
         "DeepInfra",
-        "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "https://api.deepinfra.com/v1/openai",
         "DEEPINFRA_API_KEY",
-    ),
-    "anyscale": _chat(
-        "anyscale",
-        "Anyscale Endpoints",
-        "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        "https://api.endpoints.anyscale.com/v1",
-        "ANYSCALE_API_KEY",
-    ),
-    "lambda": _chat(
-        "lambda",
-        "Lambda Labs",
-        "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        "https://api.lambdalabs.com/v1",
-        "LAMBDA_API_KEY",
     ),
     "friendli": _chat(
         "friendli",
         "FriendliAI",
-        "meta-llama-3.1-70b-instruct",
-        "https://api.friendli.ai/v1",
+        "zai-org/GLM-5.3",
+        "https://api.friendli.ai/serverless/v1",
         "FRIENDLI_API_KEY",
     ),
     "nebius": _chat(
@@ -177,8 +163,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "hyperbolic": _chat(
         "hyperbolic",
         "Hyperbolic",
-        "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        "https://api.hyperbolic.xyz/v1",
+        "glm-5.3-flash",
+        "https://api.hyperbolic.ai/inference/v1",
         "HYPERBOLIC_API_KEY",
     ),
     "novita": _chat(
@@ -216,14 +202,16 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "minimax": _chat(
         "minimax",
         "MiniMax",
-        "abab6.5s-chat",
-        "https://api.minimax.chat/v1",
+        "MiniMax-M3.1-Flash",
+        "https://api.minimax.io/v1",
         "MINIMAX_API_KEY",
+        # Mainland China accounts are served from a separate host.
+        endpoint_env="MINIMAX_BASE_URL",
     ),
     "yi": _chat(
         "yi",
         "01.AI (Yi)",
-        "yi-large",
+        "yi-lightning",
         "https://api.lingyiwanwu.com/v1",
         "YI_API_KEY",
     ),

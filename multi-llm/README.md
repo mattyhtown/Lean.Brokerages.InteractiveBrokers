@@ -9,7 +9,7 @@ Run `poetry run multi-llm providers` (or `--json`) for the live registry, defaul
 | Category | Provider IDs (sample) |
 |----------|----------------------|
 | **Frontier** | `anthropic`, `openai`, `gemini`, `xai`, `cohere` |
-| **US / global inference** | `mistral`, `deepseek`, `groq`, `together`, `fireworks`, `perplexity`, `cerebras`, `openrouter`, `huggingface`, `nvidia_nim`, `sambanova`, `deepinfra`, `anyscale`, `lambda`, `friendli`, `nebius`, `hyperbolic`, `novita`, `writer`, `reka`, `ai21` |
+| **US / global inference** | `mistral`, `deepseek`, `groq`, `together`, `fireworks`, `perplexity`, `cerebras`, `openrouter`, `huggingface`, `nvidia_nim`, `sambanova`, `deepinfra`, `friendli`, `nebius`, `hyperbolic`, `novita`, `writer`, `reka`, `ai21` |
 | **Asia-Pacific** | `moonshot`, `dashscope`, `zhipu`, `minimax`, `yi`, `baichuan`, `siliconflow`, `tencent_hunyuan` |
 | **Enterprise cloud** | `azure_openai`, `bedrock`, `watsonx`, `vertex_openai`, `databricks`, `snowflake_cortex` |
 | **Gateways & hosting** | `vercel_ai_gateway`, `cloudflare_ai`, `baseten`, `lepton` |
@@ -70,5 +70,13 @@ poetry run multi-llm chat --provider watsonx --prompt "Summarize today's macro r
 ```
 
 `WATSONX_URL` is optional and selects the region host (default `https://us-south.ml.cloud.ibm.com`).
+
+### MiniMax
+
+`minimax` calls the international host, `https://api.minimax.io/v1`, with `MiniMax-M3.1-Flash`. A key from the mainland China platform only works on that platform's host:
+
+```bash
+export MINIMAX_BASE_URL=https://api.minimax.cn/v1
+```
 
 Aliases: `claude`, `gpt`, `chatgpt`, `grok`, `kimi`, `qwen`, `glm`, `hf`, `vllm`, `lmstudio`, `vertex`, `snowflake`, etc. (`poetry run multi-llm chat --provider kimi` → Moonshot).
