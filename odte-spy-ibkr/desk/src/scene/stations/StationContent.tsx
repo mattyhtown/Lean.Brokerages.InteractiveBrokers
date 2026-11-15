@@ -1,5 +1,5 @@
 import type { DeskState, GateState } from '../../data/types'
-import { statusColor } from '../materials'
+import { statusColor, statusVerb } from '../materials'
 
 function GateChip({ gate }: { gate: GateState | undefined }) {
   if (!gate) {
@@ -7,8 +7,8 @@ function GateChip({ gate }: { gate: GateState | undefined }) {
       <div className="gate-chip" style={{ borderColor: statusColor('watch') }}>
         <span className="gate-dot" style={{ background: statusColor('watch') }} />
         <div>
-          <strong>Gate unavailable</strong>
-          <em>missing from payload</em>
+          <strong>HOLD</strong>
+          <em>gate unavailable</em>
           <p>Retained prior mock / incomplete engine data</p>
         </div>
       </div>
@@ -19,9 +19,11 @@ function GateChip({ gate }: { gate: GateState | undefined }) {
     <div className="gate-chip" style={{ borderColor: statusColor(gate.status) }}>
       <span className="gate-dot" style={{ background: statusColor(gate.status) }} />
       <div>
-        <strong>{gate.label}</strong>
+        <strong>
+          {statusVerb(gate.status)} · {gate.label}
+        </strong>
         <em>
-          {gate.value} / {gate.threshold} · {gate.status}
+          {gate.value} / {gate.threshold}
         </em>
         <p>{gate.detail}</p>
       </div>

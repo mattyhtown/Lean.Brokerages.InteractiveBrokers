@@ -1,6 +1,8 @@
-# ODTE Desk — live 3D trading room
+# ODTE Desk — live 3D ops-floor game
 
-Vite + React + TypeScript + React Three Fiber room for **ODTE SPY**.
+Vite + React + TypeScript + React Three Fiber **industrial sci-fi ops floor** for **ODTE SPY**.
+
+Art direction: graphite bulkheads, copper scaffold, signal amber lanes, mint GO / coral STOP lamps — game HUD + player-height WASD/orbit, not a flat dashboard.
 
 Orders stay **UI-locked**. The desk never places trades and never sets `ENABLE_ORDERS=true`.
 

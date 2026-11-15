@@ -20,120 +20,144 @@ import {
 
 type Props = {
   state: DeskState
+  selected: string | null
+  onSelect: (id: string) => void
 }
 
-function SceneBody({ state }: Props) {
+const FOCUS: Record<string, [number, number, number]> = {
+  signals: [-3.4, 2.2, 0.2],
+  risk: [3.5, 2.3, 0.1],
+  backtest: [-2.6, 2.5, -3.2],
+  macro: [2.8, 2.6, -3.4],
+  chain: [0.2, 3.2, -1.6],
+}
+
+function SceneBody({ state, selected, onSelect }: Props) {
   return (
     <>
-      <color attach="background" args={['#141816']} />
-      <fog attach="fog" args={['#141816', 10, 28]} />
-      <ambientLight intensity={0.35} />
+      <color attach="background" args={[palette.fog]} />
+      <fog attach="fog" args={[palette.fog, 7, 22]} />
+      <ambientLight intensity={0.28} />
       <directionalLight
         castShadow
-        position={[6, 10, 4]}
-        intensity={1.15}
-        color="#f0e2c4"
+        position={[5, 9, 3]}
+        intensity={1.05}
+        color="#e8d9b8"
         shadow-mapSize={[2048, 2048]}
       />
-      <pointLight position={[-4, 3.5, 2]} intensity={0.55} color={palette.amber} />
-      <pointLight position={[5, 2.8, -1]} intensity={0.4} color="#8fb9a0" />
+      <pointLight position={[-3.5, 3.2, 1.5]} intensity={0.7} color={palette.amber} />
+      <pointLight position={[4.5, 2.6, -0.5]} intensity={0.45} color={palette.mint} />
       <spotLight
-        position={[0, 6, 2]}
-        angle={0.45}
-        penumbra={0.6}
-        intensity={0.7}
-        color="#e8d7b4"
+        position={[0, 5.8, 1.5]}
+        angle={0.5}
+        penumbra={0.55}
+        intensity={0.85}
+        color="#f2e6c8"
         castShadow
       />
+      <pointLight position={[0, 3.4, 3.2]} intensity={0.65} color={palette.coral} distance={8} />
 
       <Room />
       <Scaffolding />
       <DeskSurface />
       <HeroBrand brand={state.brand} symbol={state.symbol} />
       <KillSwitchPillar safety={state.safety} flatten={state.flatten} />
-      <DustMotes />
+      <DustMotes count={160} />
 
-      {/* Layered stations in depth */}
       <FloatingPanel
-        position={[-3.4, 2.35, 0.2]}
-        rotation={[0, 0.35, 0]}
+        id="signals"
+        position={[-3.4, 2.2, 0.2]}
+        rotation={[0, 0.38, 0]}
         title="Signals"
-        subtitle="Proposed spreads · read-only"
+        subtitle="Live proposes · read-only"
         swayPhase={0.2}
         accent={palette.mint}
+        selected={selected === 'signals'}
+        onSelect={onSelect}
       >
         <SignalsContent state={state} />
       </FloatingPanel>
 
       <FloatingPanel
-        position={[3.5, 2.55, 0.1]}
-        rotation={[0, -0.4, 0]}
+        id="risk"
+        position={[3.5, 2.35, 0.1]}
+        rotation={[0, -0.42, 0]}
         title="Risk"
-        subtitle="Kill · flatten · limits"
+        subtitle="Hazard · flatten · limits"
         swayPhase={1.1}
         accent={palette.coral}
         width={2.35}
         height={2.05}
+        selected={selected === 'risk'}
+        onSelect={onSelect}
       >
         <RiskContent state={state} />
       </FloatingPanel>
 
       <FloatingPanel
-        position={[-2.6, 2.7, -3.2]}
-        rotation={[0, 0.15, 0]}
+        id="backtest"
+        position={[-2.6, 2.55, -3.2]}
+        rotation={[0, 0.18, 0]}
         title="Backtest"
-        subtitle="Rolling Sharpe ledger"
+        subtitle="Journal Sharpe ledger"
         swayPhase={2.0}
         accent={palette.amber}
         width={2.3}
         height={1.55}
+        selected={selected === 'backtest'}
+        onSelect={onSelect}
       >
         <BacktestContent state={state} />
       </FloatingPanel>
 
       <FloatingPanel
-        position={[2.8, 2.85, -3.4]}
-        rotation={[0, -0.2, 0]}
+        id="macro"
+        position={[2.8, 2.7, -3.4]}
+        rotation={[0, -0.22, 0]}
         title="Macro"
         subtitle="News + blackout gate"
         swayPhase={2.7}
-        accent="#8fb9a0"
+        accent={palette.mint}
         width={2.3}
         height={1.55}
+        selected={selected === 'macro'}
+        onSelect={onSelect}
       >
         <MacroContent state={state} />
       </FloatingPanel>
 
       <FloatingPanel
-        position={[0.2, 3.55, -1.6]}
+        id="chain"
+        position={[0.2, 3.35, -1.6]}
         title="Chain skew"
         subtitle="Net call bias surface"
         swayPhase={0.7}
         accent={palette.copper}
         width={2.6}
         height={1.45}
+        selected={selected === 'chain'}
+        onSelect={onSelect}
       >
         <ChainContent state={state} />
       </FloatingPanel>
 
-      <ContactShadows position={[0, 0.01, 0]} opacity={0.45} scale={18} blur={2.4} far={8} />
-      {/* Local lights only — no external HDRI so the room never hangs on Suspense */}
-      <CameraRig />
+      <ContactShadows position={[0, 0.01, 0]} opacity={0.55} scale={20} blur={2.2} far={9} />
+      <CameraRig focus={selected ? FOCUS[selected] ?? null : null} />
     </>
   )
 }
 
-export function DeskScene({ state }: Props) {
-  // No Suspense wrapper — room must mount without waiting on CDN HDRI/fonts.
+export function DeskScene({ state, selected, onSelect }: Props) {
   return (
     <Canvas
       className="desk-canvas"
       shadows
       dpr={[1, 1.75]}
-      camera={{ position: [0.2, 2.4, 7.2], fov: 42, near: 0.1, far: 60 }}
+      camera={{ position: [0, 1.72, 6.4], fov: 55, near: 0.1, far: 60 }}
       gl={{ antialias: true, alpha: false }}
+      onPointerMissed={() => onSelect('')}
     >
-      <SceneBody state={state} />
+      <SceneBody state={state} selected={selected} onSelect={onSelect} />
     </Canvas>
   )
 }

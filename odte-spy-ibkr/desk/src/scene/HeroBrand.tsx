@@ -9,47 +9,44 @@ type Props = {
   symbol: string
 }
 
-/**
- * Hero-level brand in the room — local HTML only (no drei Text CDN font).
- * Avoids Suspense hangs that blank the whole canvas when remote fonts fail.
- */
+/** In-world title card on the bulkhead — game splash, not a webpage eyebrow */
 export function HeroBrand({ brand, symbol }: Props) {
   const group = useRef<Group>(null)
 
   useFrame(({ clock }) => {
     if (!group.current) return
-    const t = clock.getElapsedTime()
-    group.current.position.y = 3.35 + Math.sin(t * 0.4) * 0.04
+    group.current.position.y = 3.55 + Math.sin(clock.getElapsedTime() * 0.5) * 0.03
   })
 
   return (
-    <group ref={group} position={[0, 3.35, -5.7]}>
+    <group ref={group} position={[0, 3.55, -6.55]}>
+      <mesh position={[0, 0, -0.02]}>
+        <boxGeometry args={[8.5, 1.8, 0.08]} />
+        <meshStandardMaterial color={palette.ink} metalness={0.4} roughness={0.45} />
+      </mesh>
+      <mesh position={[0, 0.78, 0.02]}>
+        <boxGeometry args={[8.5, 0.06, 0.04]} />
+        <meshStandardMaterial color={palette.amber} emissive={palette.amber} emissiveIntensity={0.5} />
+      </mesh>
+      <mesh position={[0, -0.78, 0.02]}>
+        <boxGeometry args={[8.5, 0.06, 0.04]} />
+        <meshStandardMaterial color={palette.scaffold} metalness={0.55} roughness={0.35} />
+      </mesh>
       <Html
         center
         transform
-        distanceFactor={6.5}
-        position={[0, 0, 0.05]}
+        distanceFactor={7.2}
+        position={[0, 0, 0.08]}
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
-        <div className="hero-brand">
+        <div className="title-card">
+          <p className="title-card-eyebrow">MISSION CONTROL</p>
           <h1>{brand.toUpperCase()}</h1>
-          <p>
-            {symbol} · STRICT · ORDERS OFF
+          <p className="title-card-sub">
+            {symbol} · STRICT OPS FLOOR · ORDERS LOCKED
           </p>
         </div>
       </Html>
-      <mesh position={[0, -0.82, 0]}>
-        <boxGeometry args={[5.2, 0.04, 0.04]} />
-        <meshStandardMaterial color={palette.scaffold} metalness={0.6} roughness={0.35} />
-      </mesh>
-      <mesh position={[-2.55, -0.7, 0]}>
-        <boxGeometry args={[0.06, 0.28, 0.06]} />
-        <meshStandardMaterial color={palette.scaffoldDark} />
-      </mesh>
-      <mesh position={[2.55, -0.7, 0]}>
-        <boxGeometry args={[0.06, 0.28, 0.06]} />
-        <meshStandardMaterial color={palette.scaffoldDark} />
-      </mesh>
     </group>
   )
 }

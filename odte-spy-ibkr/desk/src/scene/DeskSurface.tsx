@@ -2,42 +2,41 @@ import { palette } from './materials'
 
 export function DeskSurface() {
   return (
-    <group position={[0, 0.78, 0]}>
-      {/* Main desk slab */}
+    <group position={[0, 0.72, -0.2]}>
       <mesh castShadow receiveShadow>
-        <boxGeometry args={[7.2, 0.12, 2.8]} />
-        <meshStandardMaterial color="#3d342c" roughness={0.55} metalness={0.12} />
+        <boxGeometry args={[6.8, 0.14, 2.6]} />
+        <meshStandardMaterial color="#2e2820" roughness={0.5} metalness={0.18} />
       </mesh>
-      {/* Scaffold edge trim */}
-      <mesh position={[0, 0.08, 1.42]}>
-        <boxGeometry args={[7.4, 0.06, 0.08]} />
-        <meshStandardMaterial color={palette.scaffold} metalness={0.5} roughness={0.4} />
+      {/* Glowing edge */}
+      <mesh position={[0, 0.09, 1.32]}>
+        <boxGeometry args={[6.9, 0.04, 0.06]} />
+        <meshStandardMaterial color={palette.amber} emissive={palette.amber} emissiveIntensity={0.45} />
       </mesh>
-      <mesh position={[0, 0.08, -1.42]}>
-        <boxGeometry args={[7.4, 0.06, 0.08]} />
-        <meshStandardMaterial color={palette.scaffold} metalness={0.5} roughness={0.4} />
+      {/* Console props */}
+      <mesh position={[-1.8, 0.35, -0.55]} castShadow>
+        <boxGeometry args={[1.4, 0.7, 0.08]} />
+        <meshStandardMaterial color="#0e1411" emissive="#1a2e24" emissiveIntensity={0.25} />
       </mesh>
-      {/* Legs / unfinished stilts */}
+      <mesh position={[1.8, 0.35, -0.55]} castShadow>
+        <boxGeometry args={[1.4, 0.7, 0.08]} />
+        <meshStandardMaterial color="#0e1411" emissive="#2a2218" emissiveIntensity={0.2} />
+      </mesh>
+      {/* Keyboard plate */}
+      <mesh position={[0, 0.1, 0.55]}>
+        <boxGeometry args={[2.2, 0.04, 0.7]} />
+        <meshStandardMaterial color="#1a1f1c" metalness={0.3} roughness={0.5} />
+      </mesh>
       {[
-        [-3.2, -0.45, 1.1],
-        [3.2, -0.45, 1.1],
-        [-3.2, -0.45, -1.1],
-        [3.2, -0.45, -1.1],
+        [-2.9, -0.4, 1.0],
+        [2.9, -0.4, 1.0],
+        [-2.9, -0.4, -1.0],
+        [2.9, -0.4, -1.0],
       ].map((p, i) => (
         <mesh key={i} position={p as [number, number, number]} castShadow>
-          <cylinderGeometry args={[0.06, 0.08, 0.9, 8]} />
-          <meshStandardMaterial color={palette.steel} metalness={0.65} roughness={0.35} />
+          <cylinderGeometry args={[0.07, 0.09, 0.85, 8]} />
+          <meshStandardMaterial color={palette.steel} metalness={0.7} roughness={0.3} />
         </mesh>
       ))}
-      {/* Monitor risers — empty frames for depth */}
-      <mesh position={[-2.1, 0.55, -0.7]}>
-        <boxGeometry args={[1.6, 0.9, 0.05]} />
-        <meshStandardMaterial color="#151a17" metalness={0.2} roughness={0.6} />
-      </mesh>
-      <mesh position={[2.1, 0.55, -0.7]}>
-        <boxGeometry args={[1.6, 0.9, 0.05]} />
-        <meshStandardMaterial color="#151a17" metalness={0.2} roughness={0.6} />
-      </mesh>
     </group>
   )
 }
