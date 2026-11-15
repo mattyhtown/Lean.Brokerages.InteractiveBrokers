@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
 
+from research_data.adjustments import DOWNLOAD_COMMAND, FactorSnapshot
 from research_data.http import LoaderError
 from research_data.news import NewsDigest
 from research_data.newsletters import Newsletter, passage_chunks, ticker_passages
@@ -29,6 +30,7 @@ class Sentiment:
 SentimentScorer = Callable[[str], Sentiment]
 PriceDownloader = Callable[[list[str], date], PriceDownload]
 OptionsDownloader = Callable[[list[str], date], list[OptionsDay]]
+FactorReader = Callable[[list[str]], FactorSnapshot]
 NewsFetcher = Callable[[str, list[str]], NewsDigest]
 
 
@@ -212,6 +214,55 @@ def load_options(
         who = ", ".join(missing) if found else "any symbol"
         warnings.append(f"ORATS returned no options data from {start} through {end} for {who}")
     return len(symbols), stored, warnings
+
+
+def load_adjustments(
+    supabase: SupabaseClient,
+    read_factors: FactorReader,
+    watchlist: Watchlist,
+) -> tuple[int, int, date, list[str]]:
+    """Store QuantConnect's split and dividend factors for every watchlist symbol and every mentioned ticker.
+
+    A new dividend changes the factor of every earlier date, so each symbol's factors are stored
+    as one row and a reload replaces them together. Returns how many symbols were looked up, how
+    many had a factor file, the date the factors are known through, and warnings.
+    """
+    symbols = _source_symbols(supabase, watchlist)
+    snapshot = read_factors(symbols)
+    loaded_at = datetime.now(timezone.utc).isoformat()
+    supabase.upsert(
+        "price_adjustments",
+        [
+            {
+                "symbol": symbol,
+                "as_of": snapshot.as_of.isoformat(),
+                "factors": [
+                    {
+                        "through_date": row.through_date.isoformat(),
+                        "price_factor": row.price_factor,
+                        "split_factor": row.split_factor,
+                    }
+                    for row in rows
+                ],
+                "loaded_at": loaded_at,
+            }
+            for symbol, rows in snapshot.rows_by_symbol.items()
+        ],
+        on_conflict="symbol",
+    )
+    warnings = []
+    if snapshot.missing:
+        warnings.append(
+            f"QuantConnect has no factor file for {', '.join(snapshot.missing)}, so nothing was stored for them"
+        )
+    latest = supabase.select("daily_prices", columns="trade_date", order="trade_date.desc", limit=1)
+    if latest and date.fromisoformat(str(latest[0]["trade_date"])) > snapshot.as_of:
+        warnings.append(
+            f"The factor files are dated {snapshot.as_of} and prices are loaded through {latest[0]['trade_date']}, "
+            f"so returns that end after {snapshot.as_of} are not marked as adjusted. "
+            f"Run `{DOWNLOAD_COMMAND}` to update them."
+        )
+    return len(symbols), len(snapshot.rows_by_symbol), snapshot.as_of, warnings
 
 
 def load_news(

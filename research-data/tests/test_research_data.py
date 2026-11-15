@@ -3,13 +3,16 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import json
+from pathlib import Path
 import ssl
 from typing import Mapping
 import urllib.parse
+import zipfile
 
 import pytest
 
 from research_data import cli, local_finbert, newsletters
+from research_data.adjustments import FactorRow, FactorSnapshot, parse_factor_file, read_factor_files
 from research_data.cli import main as cli_main
 from research_data.http import HttpResponse, HttpStatusError, LoaderError, require_secure_url
 from research_data.local_finbert import LocalFinbert
@@ -25,6 +28,7 @@ from research_data.newsletters import (
 from research_data.options import OptionsDay, download_day, parse_cores
 from research_data.pipeline import (
     Sentiment,
+    load_adjustments,
     load_news,
     load_newsletters,
     load_options,
@@ -736,11 +740,136 @@ def test_news_is_fetched_once_per_symbol_and_day_and_tagged_with_its_symbol() ->
     assert nvidia_passages[1] == []
 
 
-def test_all_leaves_out_news_and_options_when_their_keys_are_not_set(
+# The lines of QuantConnect's AAPL factor file around the 4-for-1 split that took effect on 31 August 2020.
+AAPL_FACTORS = (
+    "20200507,0.9923080,0.25,303.74\n"
+    "20200806,0.9949942,0.25,455.61\n"
+    "20200828,0.9967882,0.25,499.23\n"
+    "20201105,0.9967882,1,119.03\n"
+    "20501231,1,1,0\n"
+)
+
+
+def test_a_factor_file_is_read_the_way_lean_reads_it() -> None:
+    text = (
+        "20501231,1,1,0\n"
+        "20200828,0.9967882,0.25,499.23\n"
+        "\n"
+        "20200828,0.5,0.5,1\n"
+        "19990104,0.5,1.6e+6,3\n"
+        "19990105,0.5,inf,3\n"
+        "19990106,0,1,3\n"
+        "20201105,0.9967882,1\n"
+    )
+    assert parse_factor_file(text, "aapl.csv") == [
+        FactorRow(date(2020, 8, 28), 0.9967882, 0.25),
+        FactorRow(date(2020, 11, 5), 0.9967882, 1.0),
+        FactorRow(date(2050, 12, 31), 1.0, 1.0),
+    ]
+
+
+@pytest.mark.parametrize("line", ["2020-08-28,1,1", "20200828,1", "20200828,one,1", "20201331,1,1", "20200828,nan,1"])
+def test_a_factor_file_line_in_an_unexpected_shape_is_an_error(line: str) -> None:
+    with pytest.raises(LoaderError, match="Unexpected line in QuantConnect factor file aapl.csv"):
+        parse_factor_file(f"20501231,1,1,0\n{line}\n", "aapl.csv")
+
+
+def write_factor_archive(lean_data: Path, name: str, files: dict[str, str]) -> None:
+    folder = lean_data / "equity" / "usa" / "factor_files"
+    folder.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(folder / name, "w") as archive:
+        for entry, text in files.items():
+            archive.writestr(entry, text)
+
+
+def test_factors_come_from_the_newest_archive_in_the_lean_data_folder(tmp_path: Path) -> None:
+    write_factor_archive(tmp_path, "factor_files_20261109.zip", {"aapl.csv": "20501231,1,1,0\n"})
+    write_factor_archive(
+        tmp_path,
+        "factor_files_20261112.zip",
+        {"aapl.csv": AAPL_FACTORS, "factor_files/BRK.B.csv": "20501231,1,1,0\n", "aaplx.csv": "20501231,1,1,0\n"},
+    )
+    (tmp_path / "equity" / "usa" / "factor_files" / "factor_files_20269999.zip").write_bytes(b"not a date")
+    (tmp_path / "equity" / "usa" / "factor_files" / "aapl.csv").write_text("20501231,2,2,0\n")
+
+    snapshot = read_factor_files(tmp_path, ["AAPL", "BRK.B", "NVDA"])
+    assert snapshot.as_of == date(2026, 11, 12)
+    assert snapshot.missing == ["NVDA"]
+    assert snapshot.rows_by_symbol == {
+        "AAPL": parse_factor_file(AAPL_FACTORS, "aapl.csv"),
+        "BRK.B": [FactorRow(date(2050, 12, 31), 1.0, 1.0)],
+    }
+    assert len(snapshot.rows_by_symbol["AAPL"]) == 5
+
+
+def test_a_lean_data_folder_without_a_readable_archive_names_the_command_to_run(tmp_path: Path) -> None:
+    with pytest.raises(LoaderError, match="Cannot read .*factor_files: No such file or directory. Run `lean data download"):
+        read_factor_files(tmp_path, ["AAPL"])
+    folder = tmp_path / "equity" / "usa" / "factor_files"
+    folder.mkdir(parents=True)
+    (folder / "aapl.csv").write_text("20501231,1,1,0\n")
+    with pytest.raises(LoaderError, match="No factor_files_YYYYMMDD.zip in .*Run `lean data download"):
+        read_factor_files(tmp_path, ["AAPL"])
+    (folder / "factor_files_20261112.zip").write_bytes(b"not a zip")
+    with pytest.raises(LoaderError, match="factor_files_20261112.zip is not a readable factor file archive"):
+        read_factor_files(tmp_path, ["AAPL"])
+
+
+def test_adjustments_store_each_symbol_whole_and_warn_about_gaps() -> None:
+    supabase = FakeSupabase(
+        {"mentioned_tickers": [[{"symbol": "TSLA"}]], "daily_prices": [[{"trade_date": "2026-11-13"}]]}
+    )
+    asked: list[list[str]] = []
+    rows = [FactorRow(date(2020, 8, 28), 0.9967882, 0.25), FactorRow(date(2050, 12, 31), 1.0, 1.0)]
+
+    def read(symbols: list[str]) -> FactorSnapshot:
+        asked.append(symbols)
+        return FactorSnapshot(date(2026, 11, 12), {"AAPL": rows, "NVDA": []}, ["GOOGL", "TSLA"])
+
+    assert load_adjustments(supabase, read, WATCHLIST) == (
+        4,
+        2,
+        date(2026, 11, 12),
+        [
+            "QuantConnect has no factor file for GOOGL, TSLA, so nothing was stored for them",
+            "The factor files are dated 2026-11-12 and prices are loaded through 2026-11-13, so returns that end "
+            "after 2026-11-12 are not marked as adjusted. "
+            'Run `lean data download --dataset "US Equity Security Master"` to update them.',
+        ],
+    )
+    assert asked == [["AAPL", "GOOGL", "NVDA", "TSLA"]]
+    ((table, stored, on_conflict, ignore_duplicates),) = supabase.upserts
+    assert (table, on_conflict, ignore_duplicates) == ("price_adjustments", "symbol", False)
+    loaded_at = stored[0].pop("loaded_at")
+    assert datetime.fromisoformat(str(loaded_at)).tzinfo is not None and stored[1].pop("loaded_at") == loaded_at
+    assert stored == [
+        {
+            "symbol": "AAPL",
+            "as_of": "2026-11-12",
+            "factors": [
+                {"through_date": "2020-08-28", "price_factor": 0.9967882, "split_factor": 0.25},
+                {"through_date": "2050-12-31", "price_factor": 1.0, "split_factor": 1.0},
+            ],
+        },
+        {"symbol": "NVDA", "as_of": "2026-11-12", "factors": []},
+    ]
+
+
+def test_adjustments_dated_up_to_the_latest_price_raise_no_warning() -> None:
+    supabase = FakeSupabase({"daily_prices": [[{"trade_date": "2026-11-12"}]]})
+    snapshot = FactorSnapshot(date(2026, 11, 12), {"AAPL": [], "GOOGL": [], "NVDA": []}, [])
+    assert load_adjustments(supabase, lambda symbols: snapshot, WATCHLIST) == (3, 3, date(2026, 11, 12), [])
+    assert load_adjustments(FakeSupabase(), lambda symbols: snapshot, WATCHLIST)[3] == []
+
+
+OPTIONAL_SETTINGS = ("PERPLEXITY_API_KEY", "ORATS_API_TOKEN", "QUANTCONNECT_LEAN_DATA_DIR")
+
+
+def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ran: list[str] = []
-    for name in ("PERPLEXITY_API_KEY", "ORATS_API_TOKEN"):
+    for name in OPTIONAL_SETTINGS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase()))
     monkeypatch.setattr(cli, "_STEPS", {name: lambda args, env, supabase, name=name: ran.append(name) for name in cli._STEPS})
@@ -749,24 +878,50 @@ def test_all_leaves_out_news_and_options_when_their_keys_are_not_set(
     assert capsys.readouterr().err == (
         "news: skipped because PERPLEXITY_API_KEY is not set\n"
         "options: skipped because ORATS_API_TOKEN is not set\n"
+        "adjustments: skipped because QUANTCONNECT_LEAN_DATA_DIR is not set\n"
     )
     monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-key")
     monkeypatch.setenv("ORATS_API_TOKEN", "orats-token")
+    monkeypatch.setenv("QUANTCONNECT_LEAN_DATA_DIR", "/lean/data")
     ran.clear()
     assert cli_main(["all"]) == 0
-    assert ran == ["newsletters", "news", "score", "prices", "options"]
+    assert ran == ["newsletters", "news", "score", "prices", "options", "adjustments"]
 
 
-def test_a_step_run_by_name_reports_its_missing_key(
+def test_a_step_run_by_name_reports_its_missing_setting(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for name in ("PERPLEXITY_API_KEY", "ORATS_API_TOKEN"):
+    for name in OPTIONAL_SETTINGS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase()))
     assert cli_main(["news"]) == 1
     assert "research-data: Missing PERPLEXITY_API_KEY" in capsys.readouterr().err
     assert cli_main(["options"]) == 1
     assert "research-data: Missing ORATS_API_TOKEN" in capsys.readouterr().err
+    assert cli_main(["adjustments"]) == 1
+    assert "research-data: Missing QUANTCONNECT_LEAN_DATA_DIR" in capsys.readouterr().err
+
+
+def test_cli_reads_factor_files_from_the_lean_data_folder(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    write_factor_archive(tmp_path / "lean", "factor_files_20261112.zip", {"aapl.csv": AAPL_FACTORS})
+    watchlist = tmp_path / "watchlist.txt"
+    watchlist.write_text("AAPL: Apple\nNVDA\n")
+    supabase = FakeSupabase({"daily_prices": [[{"trade_date": "2026-11-12"}]]})
+    monkeypatch.setenv("QUANTCONNECT_LEAN_DATA_DIR", str(tmp_path / "lean"))
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: supabase))
+    assert cli_main(["adjustments", "--watchlist", str(watchlist)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "adjustments: stored split and dividend factors for 1 of 2 symbols "
+        "from QuantConnect factor files dated 2026-11-12\n"
+    )
+    assert captured.err == (
+        "adjustments: warning: QuantConnect has no factor file for NVDA, so nothing was stored for them\n"
+    )
+    ((_, stored, _, _),) = supabase.upserts
+    assert [(row["symbol"], len(row["factors"])) for row in stored] == [("AAPL", 5)]
 
 
 def test_cli_names_the_missing_setting(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
