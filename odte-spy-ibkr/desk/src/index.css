@@ -1,0 +1,679 @@
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --ink: #060908;
+  --fog: #c5d4c8;
+  --amber: #f0a84a;
+  --coral: #ef6b4a;
+  --mint: #5fd49a;
+  --scaffold: #c9a066;
+  --panel: rgba(8, 12, 10, 0.82);
+  --panel-border: rgba(201, 160, 102, 0.4);
+  --go: #5fd49a;
+  --stop: #ef6b4a;
+  --warn: #f0a84a;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(ellipse 80% 60% at 50% 30%, #1a2420 0%, #0a0e0c 70%);
+  color: var(--fog);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.app-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.desk-canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+  touch-action: none;
+}
+
+/* —— Game HUD —— */
+.game-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.game-hud button {
+  pointer-events: auto;
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.hud-tl,
+.hud-tr,
+.hud-bl,
+.hud-br {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.hud-tl {
+  top: 1rem;
+  left: 1rem;
+}
+
+.hud-tr {
+  top: 1rem;
+  right: 1rem;
+  align-items: flex-end;
+}
+
+.hud-bl {
+  bottom: 1rem;
+  left: 1rem;
+  max-width: min(92vw, 36rem);
+}
+
+.hud-br {
+  bottom: 1rem;
+  right: 1rem;
+}
+
+.title-chip {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.55rem 0.85rem;
+  background: var(--panel);
+  border: 2px solid var(--panel-border);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+}
+
+.title-chip-mark {
+  color: var(--amber);
+  font-size: 1.1rem;
+  animation: pulse-mark 1.8s ease-in-out infinite;
+}
+
+.title-chip strong {
+  display: block;
+  font-family: Syne, sans-serif;
+  font-size: 1.15rem;
+  letter-spacing: 0.14em;
+}
+
+.title-chip em {
+  display: block;
+  font-style: normal;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+  margin-top: 0.1rem;
+}
+
+.feed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: fit-content;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(201, 160, 102, 0.35);
+  background: rgba(0, 0, 0, 0.45);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+}
+
+.feed-chip.on {
+  border-color: rgba(95, 212, 154, 0.55);
+  color: var(--mint);
+}
+
+.feed-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.feed-chip.on .feed-dot {
+  background: var(--mint);
+  box-shadow: 0 0 8px var(--mint);
+  animation: pulse-mark 1.2s ease-in-out infinite;
+}
+
+.hazard-chip,
+.lock-chip {
+  padding: 0.45rem 0.75rem;
+  background: var(--panel);
+  border: 2px solid rgba(239, 107, 74, 0.55);
+  text-align: right;
+}
+
+.hazard-chip strong {
+  display: block;
+  font-family: Syne, sans-serif;
+  letter-spacing: 0.16em;
+  color: var(--coral);
+  font-size: 0.95rem;
+  animation: hazard-flash 1.4s ease-in-out infinite;
+}
+
+.hazard-chip em {
+  display: block;
+  font-style: normal;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+  margin-top: 0.15rem;
+}
+
+.lock-chip {
+  border-color: rgba(240, 168, 74, 0.5);
+  font-family: Syne, sans-serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+}
+
+.lock-chip span {
+  display: block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  opacity: 0.75;
+  margin-top: 0.15rem;
+}
+
+.lamp-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.gate-lamp {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  background: rgba(6, 9, 8, 0.88);
+  border: 2px solid var(--lamp, var(--warn));
+  min-width: 6.5rem;
+}
+
+.lamp-bulb {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--lamp, var(--warn));
+  box-shadow: 0 0 10px var(--lamp, var(--warn));
+  flex-shrink: 0;
+  animation: pulse-mark 1.5s ease-in-out infinite;
+}
+
+.gate-lamp.status-block .lamp-bulb {
+  animation: hazard-flash 0.7s ease-in-out infinite;
+}
+
+.lamp-meta strong {
+  display: block;
+  font-family: Syne, sans-serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+  color: var(--lamp, var(--warn));
+}
+
+.lamp-meta em {
+  display: block;
+  font-style: normal;
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+}
+
+.clock-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.35rem 0.55rem;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(201, 160, 102, 0.3);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.minimap {
+  width: 9.5rem;
+  padding: 0.45rem;
+  background: rgba(6, 9, 8, 0.9);
+  border: 2px solid var(--panel-border);
+}
+
+.minimap-ring {
+  position: relative;
+  width: 8.4rem;
+  height: 8.4rem;
+  margin: 0 auto;
+  border: 1px dashed rgba(201, 160, 102, 0.35);
+  border-radius: 50%;
+}
+
+.mini-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  border: 2px solid var(--amber);
+  display: grid;
+  place-items: center;
+  font-family: Syne, sans-serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  background: rgba(20, 28, 24, 0.9);
+}
+
+.mini-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid rgba(201, 160, 102, 0.55);
+  background: rgba(12, 16, 14, 0.95);
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.mini-node.active {
+  border-color: var(--mint);
+  color: var(--mint);
+  box-shadow: 0 0 12px rgba(95, 212, 154, 0.45);
+}
+
+.mini-hint {
+  margin: 0.35rem 0 0;
+  text-align: center;
+  font-size: 0.52rem;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+}
+
+.degrade-banner {
+  position: absolute;
+  top: 5.2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.35rem 0.8rem;
+  background: rgba(239, 107, 74, 0.2);
+  border: 1px solid rgba(239, 107, 74, 0.55);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+
+.boot-veil {
+  position: absolute;
+  inset: auto 1.25rem 1.25rem auto;
+  z-index: 6;
+  font-family: Syne, sans-serif;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  color: var(--scaffold);
+  pointer-events: none;
+}
+
+/* Title card in world */
+.title-card {
+  text-align: center;
+  min-width: 22rem;
+  padding: 0.4rem 1rem;
+}
+
+.title-card-eyebrow {
+  margin: 0;
+  font-size: 0.65rem;
+  letter-spacing: 0.28em;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.title-card h1 {
+  margin: 0.2rem 0;
+  font-family: Syne, sans-serif;
+  font-weight: 800;
+  font-size: 2.6rem;
+  letter-spacing: 0.16em;
+  color: #eef3ec;
+  text-shadow: 0 3px 0 #060908;
+}
+
+.title-card-sub {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  color: var(--scaffold);
+}
+
+.hero-brand {
+  text-align: center;
+  min-width: 18rem;
+}
+
+.hero-brand h1 {
+  margin: 0;
+  font-family: Syne, sans-serif;
+  font-weight: 800;
+  font-size: 2.4rem;
+  letter-spacing: 0.12em;
+  color: #eef3ec;
+}
+
+.hero-brand p {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  color: var(--amber);
+}
+
+/* Station panels */
+.panel-surface {
+  color: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
+  padding: 0.55rem 0.65rem;
+  overflow: hidden auto;
+}
+
+.panel-surface.selected {
+  outline: 1px solid rgba(95, 212, 154, 0.35);
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-family: Syne, sans-serif;
+  font-weight: 800;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #eef3ec;
+}
+
+.panel-head p {
+  margin: 0.15rem 0 0.45rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.panel-body {
+  font-size: 0.62rem;
+  line-height: 1.35;
+}
+
+.station-block .spot {
+  margin: 0 0 0.4rem;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.signal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.signal-list li {
+  border-left: 2px solid var(--mint);
+  padding-left: 0.4rem;
+}
+
+.signal-list li.blocked {
+  border-left-color: var(--coral);
+  opacity: 0.8;
+}
+
+.signal-list span {
+  font-family: Syne, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+}
+
+.signal-list p {
+  margin: 0.1rem 0;
+}
+
+.signal-list small {
+  opacity: 0.6;
+}
+
+.gate-chip {
+  display: flex;
+  gap: 0.4rem;
+  border: 1px solid;
+  padding: 0.3rem 0.4rem;
+  margin-bottom: 0.35rem;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.gate-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.gate-chip strong {
+  display: block;
+  font-family: Syne, sans-serif;
+  font-size: 0.68rem;
+}
+
+.gate-chip em {
+  display: block;
+  font-style: normal;
+  opacity: 0.75;
+  font-size: 0.55rem;
+}
+
+.gate-chip p {
+  margin: 0.1rem 0 0;
+  opacity: 0.7;
+}
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.2rem 0;
+  border-bottom: 1px dashed rgba(201, 160, 102, 0.2);
+  padding-bottom: 0.15rem;
+}
+
+.kv.warn strong {
+  color: var(--coral);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin: 0.35rem 0;
+}
+
+.metrics-grid em {
+  display: block;
+  font-style: normal;
+  opacity: 0.55;
+  font-size: 0.52rem;
+  text-transform: uppercase;
+}
+
+.metrics-grid strong {
+  font-family: Syne, sans-serif;
+  font-size: 0.9rem;
+}
+
+.headline-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+}
+
+.headline-list li {
+  margin-bottom: 0.25rem;
+  opacity: 0.85;
+}
+
+.headline-list small {
+  color: var(--scaffold);
+  text-transform: uppercase;
+  margin-right: 0.25rem;
+}
+
+.skew-meter {
+  position: relative;
+  height: 0.55rem;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 0.45rem 0 0.7rem;
+  border: 1px solid rgba(201, 160, 102, 0.3);
+}
+
+.skew-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--coral), var(--amber), var(--mint));
+}
+
+.skew-meter span {
+  position: absolute;
+  left: 0;
+  top: 0.65rem;
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+}
+
+.muted {
+  opacity: 0.6;
+  margin: 0.35rem 0 0;
+}
+
+.kill-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: center;
+  text-align: center;
+  min-width: 11rem;
+  padding: 0.45rem 0.6rem;
+  background: rgba(8, 10, 9, 0.82);
+  border: 2px solid rgba(239, 107, 74, 0.55);
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+}
+
+.kill-label.boss strong {
+  font-family: Syne, sans-serif;
+  color: var(--coral);
+  letter-spacing: 0.16em;
+  font-size: 0.85rem;
+}
+
+.orders-lock {
+  color: var(--amber);
+  margin-top: 0.15rem;
+  font-weight: 600;
+}
+
+@keyframes pulse-mark {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes hazard-flash {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+    text-shadow: 0 0 12px rgba(239, 107, 74, 0.55);
+  }
+}
+
+/* Floor NPC nameplates */
+.agent-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.2rem 0.45rem;
+  background: rgba(6, 9, 8, 0.78);
+  border: 1px solid rgba(201, 160, 102, 0.45);
+  border-radius: 2px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  line-height: 1.15;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.agent-tag strong {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: #f0a84a;
+  font-weight: 700;
+}
+
+.agent-tag span {
+  font-size: 0.48rem;
+  letter-spacing: 0.04em;
+  color: rgba(197, 212, 200, 0.75);
+  text-transform: uppercase;
+}
+
+@media (max-width: 720px) {
+  .hud-br {
+    display: none;
+  }
+
+  .lamp-row {
+    max-width: 95vw;
+  }
+
+  .title-chip strong {
+    font-size: 0.95rem;
+  }
+}

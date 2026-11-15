@@ -25,6 +25,7 @@ openbb = ["openbb>=4.0", "pandas>=2.0"]
 [project.scripts]
 odte-spy-ibkr = "odte_spy_ibkr.runner:main"
 odte-spy-backtest = "odte_spy_ibkr.backtest.runner:main"
+odte-desk-api = "odte_spy_ibkr.desk_api:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

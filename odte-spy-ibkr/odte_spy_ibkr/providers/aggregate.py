@@ -60,6 +60,13 @@ class MarketContextAggregator:
                 deltas.append(delta)
             except ProviderNotConfigured as exc:
                 logger.info("skip provider %s: %s", provider.provider_id, exc)
+                # Record skip so callers can surface degraded/live-without-keys honestly
+                deltas.append(
+                    MarketContextDelta(
+                        provider_id=provider.provider_id,
+                        note=f"not_configured:{exc}",
+                    )
+                )
             except Exception as exc:  # noqa: BLE001 — isolate provider faults
                 logger.warning("provider %s failed: %s", provider.provider_id, exc)
                 deltas.append(
