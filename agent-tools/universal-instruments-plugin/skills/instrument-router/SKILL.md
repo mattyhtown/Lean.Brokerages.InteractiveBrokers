@@ -119,7 +119,7 @@ Tradier is a broker; quotes, option chains and trading all need a Tradier accoun
 | Route | Status |
 |-------|--------|
 | Hosted MCP `https://mcp.tradier.com/mcp` | Not connected. `initialize` and `tools/list` answer without credentials and list 21 tools, but `get_market_quotes` returned "API key is required but not provided (via JWT or API_KEY header)". |
-| REST `https://api.tradier.com/v1` (sandbox: `https://sandbox.tradier.com/v1`) | No token configured. Quotes and option chains returned 401 "Invalid access token" on both hosts. `markets/clock` and `markets/calendar` answer without a token. |
+| REST `https://api.tradier.com/v1` (sandbox: `https://sandbox.tradier.com/v1`) | No token configured. Quotes returned 401 "Invalid access token" on both hosts, and so did option chains on the live host. `markets/clock` and `markets/calendar` answer without a token. |
 
 Tools the hosted MCP lists:
 
