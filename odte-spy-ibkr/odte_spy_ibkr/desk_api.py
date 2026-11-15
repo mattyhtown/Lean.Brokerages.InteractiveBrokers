@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -74,32 +74,39 @@ def _journal_backtest_window(
     journal_path: Path,
     *,
     window_days: int,
+    as_of_date: date,
     rolling_sharpe: float,
     min_credit_fallback: float,
     tick: int,
     degraded: list[str],
 ) -> dict[str, Any]:
-    """Win rate / drawdown / avg credit from the last `window_days` journal rows."""
-    rows: list[tuple[date, float, float | None]] = []
+    """Win rate / drawdown / avg credit for calendar window ending `as_of_date` (inclusive)."""
+    cutoff = as_of_date - timedelta(days=max(window_days - 1, 0)) if window_days > 0 else date.min
+    window: list[tuple[date, float, float | None]] = []
+    skipped = 0
     if journal_path.is_file():
-        for line in journal_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-                d = date.fromisoformat(str(payload["date"]))
-                pnl = float(payload.get("pnl", 0.0))
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                continue
-            credit_raw = payload.get("credit", payload.get("avg_credit", payload.get("entry_credit")))
-            try:
-                credit = float(credit_raw) if credit_raw is not None else None
-            except (TypeError, ValueError):
-                credit = None
-            rows.append((d, pnl, credit))
-    rows.sort(key=lambda x: x[0])
-    window = rows[-window_days:] if window_days > 0 else rows
+        # Stream + date-filter so long journals are not fully retained
+        with journal_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                    d = date.fromisoformat(str(payload["date"]))
+                    pnl = float(payload.get("pnl", 0.0))
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    skipped += 1
+                    continue
+                if d < cutoff or d > as_of_date:
+                    continue
+                credit_raw = payload.get("credit", payload.get("avg_credit", payload.get("entry_credit")))
+                try:
+                    credit = float(credit_raw) if credit_raw is not None else None
+                except (TypeError, ValueError):
+                    credit = None
+                window.append((d, pnl, credit))
+    window.sort(key=lambda x: x[0])
 
     wins = 0
     credits: list[float] = []
@@ -130,6 +137,19 @@ def _journal_backtest_window(
         avg_credit = min_credit_fallback
         credit_note = "min_credit_fallback"
 
+    note = (
+        f"Live journal ({journal_path.name}) · calendar={window_days}d "
+        f"[{cutoff.isoformat()}→{as_of_date.isoformat()}] · "
+        f"trades={trades} · {credit_note} · tick={tick}"
+    )
+    if skipped:
+        note += f" · skipped_rows={skipped}"
+        tag = f"journal_skipped_rows:{skipped}"
+        if tag not in degraded:
+            degraded.append(tag)
+    if degraded:
+        note += f" · {','.join(degraded[:4])}"
+
     return {
         "windowDays": window_days,
         "trades": trades,
@@ -137,11 +157,7 @@ def _journal_backtest_window(
         "rollingSharpe": rolling_sharpe,
         "maxDrawdown": round(max_dd, 4),
         "avgCredit": round(float(avg_credit), 4),
-        "note": (
-            f"Live journal ({journal_path.name}) · window={window_days}d · "
-            f"trades={trades} · {credit_note} · tick={tick}"
-            + (f" · {','.join(degraded[:4])}" if degraded else "")
-        ),
+        "note": note,
     }
 
 
@@ -244,8 +260,9 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
             if ctx.spot is None or float(ctx.spot or 0.0) <= 0.0:
                 if "spot_unavailable" not in degraded:
                     degraded.append("spot_unavailable")
-            # Enabled providers that contributed neither notes nor raw payloads
-            for pid in settings.providers_enabled_list:
+            # Built provider instances that contributed neither notes nor raw payloads
+            for provider in providers:
+                pid = provider.provider_id
                 if pid in (ctx.provider_notes or {}) or pid in (ctx.raw_by_provider or {}):
                     continue
                 tag = f"{pid}:silent"
@@ -390,6 +407,7 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
     backtest = _journal_backtest_window(
         journal_path,
         window_days=window_days,
+        as_of_date=now_et.date(),
         rolling_sharpe=float(sharpe_val) if sharpe_val is not None else 0.0,
         min_credit_fallback=float(settings.min_credit),
         tick=_TICK,
