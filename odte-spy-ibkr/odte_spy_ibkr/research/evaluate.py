@@ -7,9 +7,12 @@ from pathlib import Path
 
 from odte_spy_ibkr.config import Settings, load_settings
 from odte_spy_ibkr.research.alpaca_ingest import RESEARCH_ROOT, load_daily_bars, load_minute_bars
+from odte_spy_ibkr.research.chain_io import load_chain_rows, rows_to_candidates
 from odte_spy_ibkr.research.features import FeatureRow, compute_features_for_day
-from odte_spy_ibkr.research.labels import LabelRow, spy_return_to_close
+from odte_spy_ibkr.research.labels import LabelRow, modeled_spread_pnl_from_marks, spy_return_to_close
+from odte_spy_ibkr.research.paths import UW_ROOT
 from odte_spy_ibkr.research.stats import FeatureTestResult, bonferroni_adjust, evaluate_feature
+from odte_spy_ibkr.strategy.credit_spread import choose_short_leg
 
 
 @dataclass
@@ -53,6 +56,52 @@ def _require_real_minute_coverage(days: list[date], cache_dir: Path) -> None:
         )
 
 
+def _load_uw_flow_strength(day: date) -> float | None:
+    p = UW_ROOT / "daily" / f"{day.isoformat()}.json"
+    if not p.is_file():
+        return None
+    try:
+        return float(json.loads(p.read_text(encoding="utf-8")).get("aggregate_bias"))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _spread_pnl(
+    settings: Settings,
+    day: date,
+    *,
+    signal_rows: list[dict],
+    close_rows: list[dict],
+    spot: float,
+) -> float | None:
+    entry = rows_to_candidates(signal_rows, day)
+    exit_c = rows_to_candidates(close_rows, day) if close_rows else entry
+    short = choose_short_leg(settings, entry, right="P", spot=spot)
+    if short is None:
+        return None
+    from odte_spy_ibkr.chain import build_vertical_spread
+
+    spread = build_vertical_spread(short, entry, width=settings.spread_width)
+    if spread is None or spread.short_leg.mid is None or spread.long_leg.mid is None:
+        return None
+    exit_short = next((c for c in exit_c if c.strike == short.strike and c.right == short.right), None)
+    if exit_short is None:
+        return None
+    exit_long = next(
+        (c for c in exit_c if c.strike == spread.long_leg.strike and c.right == spread.long_leg.right),
+        None,
+    )
+    if exit_long is None or exit_short.mid is None or exit_long.mid is None:
+        return None
+    return modeled_spread_pnl_from_marks(
+        entry_short_mid=spread.short_leg.mid,
+        entry_long_mid=spread.long_leg.mid,
+        exit_short_mid=exit_short.mid,
+        exit_long_mid=exit_long.mid,
+        commission=settings.backtest_commission_per_contract,
+    )
+
+
 def build_dataset(settings: Settings, *, days: list[date]) -> list[ResearchRow]:
     cache_dir = Path(settings.backtest_cache_dir).parent / "research" / "alpaca"
     if not (cache_dir / "spy_daily.json").is_file():
@@ -67,17 +116,37 @@ def build_dataset(settings: Settings, *, days: list[date]) -> list[ResearchRow]:
         if not minute:
             prev_close = daily.get(day, prev_close)
             continue
+        signal_rows = load_chain_rows(day, snapshot="signal")
+        close_rows = load_chain_rows(day, snapshot="close")
+        chain = rows_to_candidates(signal_rows, day) if signal_rows else None
         feats = compute_features_for_day(
             settings,
             day=day,
             minute_bars=minute,
             prev_close=prev_close,
-            chain=None,
+            chain=chain,
         )
+        uw_strength = _load_uw_flow_strength(day)
+        feats = FeatureRow(
+            day=feats.day,
+            net_call_bias=feats.net_call_bias,
+            overnight_gap=feats.overnight_gap,
+            opening_range_pct=feats.opening_range_pct,
+            intraday_mom_to_signal=feats.intraday_mom_to_signal,
+            realized_vol_opening_hour=feats.realized_vol_opening_hour,
+            macro_minutes_to_tier1=feats.macro_minutes_to_tier1,
+            uw_flow_strength=uw_strength,
+        )
+        from odte_spy_ibkr.research.features import SIGNAL_TIME, _price_at
+
+        spot = _price_at(minute, SIGNAL_TIME)
+        spread_pnl = None
+        if signal_rows and spot and spot > 0:
+            spread_pnl = _spread_pnl(settings, day, signal_rows=signal_rows, close_rows=close_rows, spot=spot)
         lbl = LabelRow(
             day=day,
             spy_return_to_close=spy_return_to_close(minute),
-            spread_pnl_usd=None,
+            spread_pnl_usd=spread_pnl,
         )
         rows.append(ResearchRow(feats, lbl))
         prev_close = daily.get(day, prev_close)
@@ -99,8 +168,12 @@ def run_research(
         notes = [f"Short calendar: {len(days)} trading days in daily cache."]
     else:
         notes = []
-    notes.append("UW flow: untested (no historical UW cache; feature left null by design).")
-    notes.append("net_call_bias: null unless per-day real option chain parquet present in cache.")
+    uw_days = sum(1 for p in (UW_ROOT / "daily").glob("*.json")) if (UW_ROOT / "daily").is_dir() else 0
+    if uw_days:
+        notes.append(f"UW flow cache: {uw_days} daily files under data/research/uw/daily/")
+    else:
+        notes.append("UW flow: untested (no historical UW research cache; uw_flow_strength left null).")
+    notes.append("net_call_bias / spread P&L: require data/research/chains/SPY/{{date}}.json from ORATS, UW, or IBKR ingest.")
 
     holdout = days[-holdout_days:]
     train = days[: -holdout_days]

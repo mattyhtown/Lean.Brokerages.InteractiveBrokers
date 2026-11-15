@@ -54,3 +54,17 @@ def modeled_put_spread_pnl(
     """Credit spread P&L from real option mids at entry; exit marks option mids at close if provided."""
     credit = (short_mid - long_mid) * 100 * contracts - entry_slip - commission
     return credit
+
+
+def modeled_spread_pnl_from_marks(
+    *,
+    entry_short_mid: float,
+    entry_long_mid: float,
+    exit_short_mid: float,
+    exit_long_mid: float,
+    commission: float = 1.30,
+    contracts: int = 1,
+) -> float:
+    entry_credit = (entry_short_mid - entry_long_mid) * 100 * contracts
+    exit_debit = (exit_short_mid - exit_long_mid) * 100 * contracts
+    return entry_credit - exit_debit - 2 * commission

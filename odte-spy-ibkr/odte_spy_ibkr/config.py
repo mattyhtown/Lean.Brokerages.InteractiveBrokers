@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     alpaca_api_secret: str = Field(default="", alias="ALPACA_API_SECRET")
     alpaca_data_url: str = Field(default="https://data.alpaca.markets", alias="ALPACA_DATA_URL")
 
+    # ORATS (research ingest + future vol provider)
+    orats_api_token: str = Field(default="", alias="ORATS_API_TOKEN")
+    orats_api_key: str = Field(default="", alias="ORATS_API_KEY")
+    orats_use_delayed_intraday: bool = Field(default=False, alias="ORATS_USE_DELAYED_INTRADAY")
+
     # Coinbase macro overlay (public stats; keys optional for future private endpoints)
     coinbase_api_key: str = Field(default="", alias="COINBASE_API_KEY")
     coinbase_api_secret: str = Field(default="", alias="COINBASE_API_SECRET")
@@ -172,6 +177,10 @@ class Settings(BaseSettings):
     @property
     def coinbase_products_list(self) -> list[str]:
         return [p.strip().upper() for p in self.coinbase_products.split(",") if p.strip()]
+
+    @property
+    def orats_api_token_resolved(self) -> str:
+        return (self.orats_api_token or self.orats_api_key or "").strip()
 
     @field_validator("entry_cutoff", "flatten_time", mode="before")
     @classmethod

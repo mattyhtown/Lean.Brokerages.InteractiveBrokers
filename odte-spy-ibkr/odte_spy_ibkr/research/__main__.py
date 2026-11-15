@@ -7,26 +7,36 @@ from pathlib import Path
 
 from odte_spy_ibkr.config import load_settings
 from odte_spy_ibkr.logging_utils import setup_logging
-from odte_spy_ibkr.research.alpaca_ingest import ingest_range
 from odte_spy_ibkr.research.evaluate import report_markdown, run_research
+from odte_spy_ibkr.research.ingest import log_credential_status, run_ingest
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="ODTE alpha research (real Alpaca data only)")
+    parser = argparse.ArgumentParser(description="ODTE alpha research (real market data only)")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    ing = sub.add_parser("ingest", help="Pull SPY bars from Alpaca Data API into data/research/alpaca/")
-    ing.add_argument("--days", type=int, default=120)
+    ing = sub.add_parser("ingest", help="Pull research caches (Alpaca / UW / IBKR / ORATS)")
+    ing.add_argument(
+        "--source",
+        action="append",
+        choices=["alpaca", "uw", "ibkr", "orats", "all"],
+        default=["alpaca"],
+        help="Repeat for multiple sources; default alpaca only",
+    )
+    ing.add_argument("--start", type=date.fromisoformat, default=None)
+    ing.add_argument("--end", type=date.fromisoformat, default=None)
+    ing.add_argument("--days", type=int, default=120, help="Lookback when --start omitted")
     ev = sub.add_parser("evaluate", help="Walk-forward feature IC with final holdout")
     ev.add_argument("--holdout-days", type=int, default=20)
     ev.add_argument("--report", default="")
     args = parser.parse_args()
     settings = load_settings()
     setup_logging(settings.log_level)  # type: ignore[arg-type]
+    log_credential_status(settings)
 
     if args.cmd == "ingest":
-        end = date.today()
-        start = end - timedelta(days=args.days)
-        paths = ingest_range(settings, start=start, end=end)
+        end = args.end or date.today()
+        start = args.start or (end - timedelta(days=args.days))
+        paths = run_ingest(settings, sources=list(args.source), start=start, end=end)
         print(json.dumps(paths, indent=2))
         return
     if args.cmd == "evaluate":

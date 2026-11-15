@@ -34,7 +34,7 @@ This software is for education and paper testing only. Options trading involves 
 | `unusual_whales` | **Implemented** | `UNUSUAL_WHALES_API_KEY`, `GET /api/stock/SPY/flow-recent`, `flow-alerts`, `option-activity/unusual` |
 | `alpaca` | **Implemented** | `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `ALPACA_DATA_URL` — `GET /v2/stocks/SPY/snapshot`, optional `GET /v1beta1/options/snapshots/SPY` |
 | `coinbase` | **Implemented** | Public `GET https://api.exchange.coinbase.com/products/{id}/stats` for BTC/ETH 24h % → `macro_risk_off` |
-| `orats` | **Stub** | `ORATS_ENABLED=true` + `ORATS_API_KEY` (raises until implemented) |
+| `orats` | **Research ingest** | `ORATS_API_TOKEN` — historical 1-min strikes chain via `python -m odte_spy_ibkr.research ingest --source orats` (no live MCP) |
 | `you_finance` | **Stub** | `YOU_FINANCE_ENABLED` + `YOU_API_KEY` |
 | `context` | **Stub** | `CONTEXT_ENABLED` + `CONTEXT_API_KEY` |
 | `sp_global` | **Stub** | `SP_GLOBAL_ENABLED` + `SP_GLOBAL_API_KEY` |
@@ -121,6 +121,26 @@ python -m odte_spy_ibkr.unusual_whales --once
 Appends `data/cache/uw/sessions/{date}.jsonl` and refreshes `data/cache/uw/{date}.json` for backtest replay.
 
 **Gaps:** Without Alpaca/UW keys, backtest uses **synthetic** chains (not historical marks); UW history is cache-first.
+
+## Alpha research ingest (real data)
+
+See `data/research/README.md` for cache layout.
+
+```bash
+# Credential scan runs at the start of every research CLI invocation.
+python -m odte_spy_ibkr.research ingest --source alpaca --start 2026-07-01 --end 2026-11-05
+python -m odte_spy_ibkr.research ingest --source uw     # needs UNUSUAL_WHALES_API_KEY
+python -m odte_spy_ibkr.research ingest --source orats  # needs ORATS_API_TOKEN
+python -m odte_spy_ibkr.research ingest --source ibkr   # needs TWS/Gateway on IB_HOST:IB_PORT, READ_ONLY=true
+python -m odte_spy_ibkr.research evaluate --holdout-days 20
+```
+
+- **Alpaca:** SPY minutes + daily summary.
+- **Unusual Whales:** `flow-per-strike?date=` + `option-chains?date=&greeks=true` (historical); `flow-recent` is live-only per UW docs.
+- **ORATS:** `GET /datav2/historical/one-minute/strikes/chain` (CSV, EST `tradeDate`); does not provide equity OHLC — pair with Alpaca/IBKR for SPY bars.
+- **IBKR:** `reqHistoricalData` read-only; ~11s pacing between option requests.
+
+Neither UW, IBKR, nor ORATS ingest was executed against live services in the cloud agent environment (mocked unit tests only).
 
 ## Continuous improvement
 

@@ -67,6 +67,28 @@ class UnusualWhalesClient:
             params["ticker"] = ticker
         return self._get("/api/option-activity/unusual", params)
 
+    def flow_per_strike(self, ticker: str, *, date: str | None = None) -> Any:
+        """GET /api/stock/{ticker}/flow-per-strike — historical when `date` (YYYY-MM-DD) is set."""
+        params: dict[str, Any] = {}
+        if date:
+            params["date"] = date
+        return self._get(f"/api/stock/{ticker}/flow-per-strike", params)
+
+    def option_chains(
+        self,
+        ticker: str,
+        *,
+        date: str | None = None,
+        greeks: bool = True,
+        page: int = 0,
+        limit: int = 500,
+    ) -> Any:
+        """GET /api/stock/{ticker}/option-chains — historical when `date` is set; paginated with greeks=true."""
+        params: dict[str, Any] = {"greeks": "true" if greeks else "false", "page": page, "limit": limit}
+        if date:
+            params["date"] = date
+        return self._get(f"/api/stock/{ticker}/option-chains", params)
+
     def spy_context_bundle(self, ticker: str = "SPY", *, trading_day: date | None = None) -> dict[str, Any]:
         day = trading_day or date.today()
         return {
