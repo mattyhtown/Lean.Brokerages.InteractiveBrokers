@@ -100,9 +100,17 @@ class Settings(BaseSettings):
 
     # Multi-provider market data
     providers_enabled: str = Field(
-        default="ibkr,unusual_whales,alpaca,openbb,macro_news,tradingeconomics",
+        default="ibkr,unusual_whales,alpaca,openbb,alphavantage,macro_news,tradingeconomics",
         alias="PROVIDERS_ENABLED",
     )
+
+    # Alpha Vantage (equity quote + research minute ingest)
+    alphavantage_api_key: str = Field(default="", alias="ALPHAVANTAGE_API_KEY")
+    alphavantage_base_url: str = Field(default="https://www.alphavantage.co/query", alias="ALPHAVANTAGE_BASE_URL")
+    alphavantage_outputsize: str = Field(default="full", alias="ALPHAVANTAGE_OUTPUTSIZE")
+    alphavantage_request_delay_sec: float = Field(default=12.0, alias="ALPHAVANTAGE_REQUEST_DELAY_SEC")
+    alphavantage_ingest_options: bool = Field(default=False, alias="ALPHAVANTAGE_INGEST_OPTIONS")
+    alphavantage_ingest_realtime_options: bool = Field(default=False, alias="ALPHAVANTAGE_INGEST_REALTIME_OPTIONS")
 
     # OpenBB Platform (optional openbb package; PAT for Hub / historical providers)
     openbb_pat: str = Field(default="", alias="OPENBB_PAT")

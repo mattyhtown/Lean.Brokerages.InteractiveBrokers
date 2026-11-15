@@ -33,6 +33,7 @@ def test_default_providers_include_macro_inputs():
     settings = Settings()
     enabled = settings.providers_enabled_set
     assert "openbb" in enabled
+    assert "alphavantage" in enabled
     assert "macro_news" in enabled
     assert "tradingeconomics" in enabled
     providers = build_providers(settings, ib_session=None)

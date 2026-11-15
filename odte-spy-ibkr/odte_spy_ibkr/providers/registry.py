@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from odte_spy_ibkr.config import Settings
 from odte_spy_ibkr.providers.alpaca import AlpacaProvider
+from odte_spy_ibkr.providers.alphavantage import AlphaVantageProvider
 from odte_spy_ibkr.providers.base import BaseProvider
 from odte_spy_ibkr.providers.coinbase import CoinbaseProvider
 from odte_spy_ibkr.providers.ibkr import IBKRProvider
@@ -23,6 +24,7 @@ def build_providers(settings: Settings, ib_session: IBSession | None) -> list[Ba
         IBKRProvider(ib_session, enabled="ibkr" in enabled),
         UnusualWhalesProvider(settings),
         AlpacaProvider(settings),
+        AlphaVantageProvider(settings),
         OpenBBProvider(settings),
         CoinbaseProvider(settings),
         MacroNewsProvider(settings),

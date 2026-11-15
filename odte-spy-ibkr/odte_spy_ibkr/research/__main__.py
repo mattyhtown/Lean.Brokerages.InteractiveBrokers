@@ -27,6 +27,7 @@ def main() -> None:
             "tradingeconomics",
             "quantconnect",
             "openbb",
+            "alphavantage",
             "all",
         ],
         default=None,

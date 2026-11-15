@@ -5,9 +5,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from odte_spy_ibkr.research.paths import ALPACA_ROOT, IBKR_ROOT, QUANTCONNECT_ROOT
+from odte_spy_ibkr.research.paths import ALPACA_ROOT, ALPHAVANTAGE_ROOT, IBKR_ROOT, QUANTCONNECT_ROOT
 
-MINUTE_SOURCES: tuple[Path, ...] = (ALPACA_ROOT, QUANTCONNECT_ROOT, IBKR_ROOT)
+MINUTE_SOURCES: tuple[Path, ...] = (ALPACA_ROOT, QUANTCONNECT_ROOT, ALPHAVANTAGE_ROOT, IBKR_ROOT)
 
 
 def load_minute_bars(day: date, cache_dir: Path | None = None) -> list[dict[str, Any]]:
