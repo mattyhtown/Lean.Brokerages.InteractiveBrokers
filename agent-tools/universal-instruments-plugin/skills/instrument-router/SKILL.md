@@ -32,8 +32,9 @@ description: Route research and trades to the right MCP by asset class (equities
 | US stock/ETF bars, trade | `Alpaca-trading` `get_stock_bars`, `place_stock_order` | `Coinbase` `product_type=EQUITY`; IB `ib-lean-bridge` `get_historical_bars` sec_type STK |
 | US equity option chain | `Alpaca-trading` `get_option_chain`, `get_option_contracts` | IB bridge + LEAN live |
 | SPX/VIX/DJX/XSP index options | `Alpaca-trading` `get_option_chain` (underlier SPX, VIX, …) | IB only for NDX/RUT |
-| Index spot level | `Alpaca-trading` `get_index_latest_values` | IB bridge |
-| Bond quotes | `Alpaca-trading` `get_fixed_income_latest_quotes` (ISINs) | IB bridge sec_type BOND |
+| Index spot level | `Alpaca-trading` `get_index_latest_values` (returned 403 "insufficient grants" on 2026-11-15; needs an Alpaca data entitlement) | IB bridge |
+| Bond quotes | `Alpaca-trading` `get_fixed_income_latest_quotes` (returned 403 "Subscription does not permit querying fixed income" on 2026-11-15) | IB bridge sec_type BOND |
+| Bond market proxy | `Alpaca-trading` `get_stock_bars` on bond ETFs (`SHY,IEF,TLT,LQD,HYG,TIP`) | — |
 | Bond / FX / CME futures trade | `ib-lean-bridge` + LEAN live IB | — |
 | FX historical bars | `ib-lean-bridge` `get_historical_bars` sec_type CASH | — |
 | Crypto spot/perp | `Coinbase` / `Alpaca-trading` crypto tools | — |
@@ -53,7 +54,8 @@ Status as checked on 2026-11-15. Re-check a namespace before relying on it.
 | Fundamentals | `Sp-global`, `Daloopa` | Both need authentication; no tools until connected. |
 | Earnings dates and results | None | No connected source. `Alpaca-trading` `get_news` gives headlines only; `get_corporate_actions` covers dividends, splits and mergers, not earnings. |
 | Macro series (rates, CPI, GDP, jobs) | None | No connected source. `You-finance` needs authentication. |
-| Macro proxies | `Alpaca-trading` `get_index_latest_values` (SPX, VIX), `get_fixed_income_latest_quotes` (Treasury ISINs); `prediction-markets` Kalshi event markets | Market-implied only, not the underlying economic releases. |
+| Macro proxies | `Alpaca-trading` `get_stock_bars` on bond ETFs (`SHY,IEF,TLT,LQD,HYG,TIP`); `prediction-markets` Kalshi event markets (rate and inflation series such as `KXFEDCUT`) | Market-implied only, not the underlying economic releases. Alpaca index levels and fixed income quotes are not permitted on the current subscription. |
+| Crypto prices | `Coinbase` `coinbase_products_best_bid_ask`; `Alpaca-trading` `get_crypto_snapshot` with `loc=us` | Both work. Prefer Coinbase for pricing: Alpaca quotes come from its own thin venue (BTC spread about $16 against $0.01 on Coinbase when checked). `Kraken` and `1inch-mcp` fail discovery. |
 | Sector fund flows (ETF creations and redemptions) | None | No connected source. Unusual Whales is in `.cursor/mcp.json.example` but not connected. |
 | Sector rotation proxy | `Alpaca-trading` `get_stock_bars` on the sector SPDRs (`XLK,XLF,XLE,XLV,XLI,XLY,XLP,XLU,XLB,XLRE,XLC`) | Works. Price change and traded dollar volume (`v` times `vw`) only; this is not money entering or leaving the funds. |
 | Institutional ownership (13F holdings), insider trades, dark pool totals | None | No connected source. `Sp-global` needs authentication; Unusual Whales is not connected. |
