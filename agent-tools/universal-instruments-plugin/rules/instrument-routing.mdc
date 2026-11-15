@@ -11,6 +11,7 @@ Use the **instrument-router** skill (`skills/instrument-router/SKILL.md`) for fu
 - Crypto / Coinbase futures → **Coinbase**
 - Forex, bonds, CME futures, NDX/RUT options → **ib-lean-bridge** + LEAN/IB
 - Kalshi / Polymarket → **prediction-markets** MCP (this plugin)
+- Short interest, fundamentals, earnings dates, analyst ratings, macro series, crypto market caps → direct HTTP sources listed in the skill (no MCP connected)
 - Preview before live orders; PM trading requires explicit user confirmation
 
 MCP health: `docs/MCP_HEALTH_CHECKLIST.md`
