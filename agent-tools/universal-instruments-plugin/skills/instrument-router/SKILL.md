@@ -91,6 +91,24 @@ The Zacks, TipRanks, stockanalysis.com and Yahoo endpoints are the sites' own un
 
 Hosted MCP endpoints exist for some of these; see `docs/MCP_HEALTH_CHECKLIST.md`. None is connected.
 
+## Moomoo (not connected)
+
+Moomoo is a broker, not a keyless data source: every route needs a moomoo login. Status as checked on 2026-11-15; coverage is from moomoo's API documentation (v10.12), not from live calls.
+
+| Route | Status |
+|-------|--------|
+| Hosted MCP `https://mcp.moomoo.com/mcp` | Not connected. OAuth sign-in; an unauthenticated `initialize` returned 401 "missing Bearer token". Scopes: `quote:read`, `quote:write` (watchlists), `trade:read`, `trade:write`. Tool names cannot be listed until it is authorized. |
+| OpenAPI through the OpenD gateway | Not available. OpenD must be running and logged in; nothing listens on `127.0.0.1:11111` on the cloud agent VM. Python SDK is `moomoo-api` on PyPI (10.12.7208). |
+| Web endpoints without a login | Not found. The one moomoo.com quote endpoint tried returned "Params Error". |
+
+Documented coverage once connected:
+
+- **Quotes:** US stocks and ETFs, US stock and index options, US futures, Hong Kong and A-share markets, crypto, event contracts. No US index levels, OTC securities or forex, so it does not fill the index spot or FX gaps above.
+- **Live trading on a Moomoo US account:** US stocks, ETFs and options, Hong Kong stocks, China Connect A-shares, crypto, event contracts. US futures are not tradable on Moomoo US.
+- **Paper trading:** US stocks, options and futures.
+
+If it is connected, treat it as a fallback to `Alpaca-trading` for US equity and option quotes, and do not place a moomoo order without explicit user approval.
+
 ## MCP health
 
 If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugin. Reconnect ORATS/Kraken/Alpaca-paper in Cursor settings.
