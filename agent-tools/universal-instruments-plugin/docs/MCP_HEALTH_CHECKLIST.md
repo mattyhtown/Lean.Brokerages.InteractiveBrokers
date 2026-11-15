@@ -44,6 +44,20 @@ Use `coinbase_products_list` with filters before trading. Preview equities/futur
 3. ORATS / Kraken: if discovery still fails, disable and re-enable the server or update the plugin package.
 4. Restart Cursor if tools remain stale after auth.
 
+## Data sources without a connected MCP
+
+These providers publish hosted MCP endpoints. None is connected or listed in this plugin's `mcp.json`; adding one is a change to your Cursor MCP settings. The handshake column is the reply to an MCP `initialize` request sent without credentials on 2026-11-15.
+
+| Provider | Hosted MCP endpoint | Handshake without credentials |
+|----------|---------------------|-------------------------------|
+| CoinGecko | `https://mcp.api.coingecko.com/mcp` | Succeeds. Advertises `search_docs` and `execute`. |
+| Crypto.com Exchange | `https://mcp.crypto.com/market-data/mcp` | Succeeds. Advertises `get_market_orderbook`, `get_market_trades`, `get_market_candles`, `get_widget`. |
+| CoinMarketCap | `https://mcp.coinmarketcap.com/mcp` | 401 "Token not found". Needs a CoinMarketCap API key. |
+| Alpha Vantage | `https://mcp.alphavantage.co/mcp` | 401 "Missing access token". Needs an Alpha Vantage API key. |
+| FMP | `https://financialmodelingprep.com/mcp` | 401 "Authentication required". Needs an FMP API key. |
+
+No hosted MCP endpoint was checked for Zacks, TipRanks, stockanalysis.com or Yahoo Finance. Until a server is connected, use the direct HTTP table in the instrument-router skill.
+
 ## Secrets (never commit)
 
 | Variable | Used by |
