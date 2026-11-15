@@ -98,7 +98,7 @@ def _run_news(args: argparse.Namespace, env: Mapping[str, str], supabase: Supaba
 
     day = datetime.now(_MARKET_TIME_ZONE).date()
     fetched, skipped, items = load_news(supabase, fetch, _read_watchlist(args.watchlist), day)
-    print(f"news: fetched {fetched} digests for {day} with {items} news items, {skipped} symbols already had one")
+    print(f"news: fetched {fetched} digests for {day} and stored {items} news items, {skipped} symbols already had one")
 
 
 def _run_options(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:

@@ -280,21 +280,40 @@ def load_news(
 
     Returns how many digests were fetched, how many symbols were skipped, and how many news
     items were stored. Each digest is saved as soon as it arrives, so a run that stops partway
-    does not pay for the same digest again.
+    does not pay for the same digest again. A digest whose items were never saved, because an
+    earlier run stopped between the two writes, has them rebuilt from its stored text.
     """
     digest_ids = {symbol: f"{PERPLEXITY_SOURCE}:{symbol}:{day.isoformat()}" for symbol in watchlist.symbols}
     stored = {
-        str(row["id"])
+        str(row["id"]): str(row["body_text"])
         for row in supabase.select(
             "newsletters",
-            columns="id",
+            columns="id,body_text",
             order="id.asc",
             filters={"source": f"eq.{PERPLEXITY_SOURCE}", "id": f"like.*:{day.isoformat()}"},
+        )
+    }
+    with_items = {
+        str(row["newsletter_id"])
+        for row in supabase.select(
+            "newsletter_passages",
+            columns="newsletter_id",
+            order="id.asc",
+            filters={"newsletter_id": f"like.{PERPLEXITY_SOURCE}:*:{day.isoformat()}"},
         )
     }
     fetched = items = 0
     for symbol, digest_id in digest_ids.items():
         if digest_id in stored:
+            chunks = [] if digest_id in with_items else passage_chunks(stored[digest_id])
+            if chunks:
+                supabase.upsert(
+                    "newsletter_passages",
+                    _digest_passages(digest_id, symbol, chunks),
+                    on_conflict="newsletter_id,passage_index",
+                    ignore_duplicates=True,
+                )
+                items += len(chunks)
             continue
         digest = fetch(symbol, watchlist.names(symbol))
         body_text = "\n".join(digest.items)
@@ -317,15 +336,19 @@ def load_news(
         )
         supabase.upsert(
             "newsletter_passages",
-            [
-                {"newsletter_id": digest_id, "passage_index": index, "passage_text": chunk, "tickers": [symbol]}
-                for index, chunk in enumerate(chunks)
-            ],
+            _digest_passages(digest_id, symbol, chunks),
             on_conflict="newsletter_id,passage_index",
         )
         fetched += 1
         items += len(chunks)
     return fetched, len(digest_ids) - fetched, items
+
+
+def _digest_passages(digest_id: str, symbol: str, chunks: list[str]) -> list[dict[str, object]]:
+    return [
+        {"newsletter_id": digest_id, "passage_index": index, "passage_text": chunk, "tickers": [symbol]}
+        for index, chunk in enumerate(chunks)
+    ]
 
 
 def load_benzinga(

@@ -696,8 +696,55 @@ def test_a_perplexity_answer_without_text_is_an_error() -> None:
         fetch_digest("pplx-key", "NVDA", [], http)
 
 
+def test_a_stored_digest_without_items_has_them_rebuilt_without_asking_perplexity_again() -> None:
+    day = "2026-11-10"
+    supabase = FakeSupabase(
+        {
+            "newsletters": [
+                [
+                    {"id": f"perplexity:AAPL:{day}", "body_text": "Apple beat estimates.\nApple settled."},
+                    {"id": f"perplexity:GOOGL:{day}", "body_text": "Google settled."},
+                    {"id": f"perplexity:NVDA:{day}", "body_text": ""},
+                ]
+            ],
+            "newsletter_passages": [[{"newsletter_id": f"perplexity:GOOGL:{day}"}]],
+        }
+    )
+
+    def fetch(symbol: str, names: list[str]) -> NewsDigest:
+        raise AssertionError(f"{symbol} already has a digest")
+
+    assert load_news(supabase, fetch, WATCHLIST, date(2026, 11, 10)) == (0, 3, 2)
+    assert supabase.upserts == [
+        (
+            "newsletter_passages",
+            [
+                {
+                    "newsletter_id": f"perplexity:AAPL:{day}",
+                    "passage_index": 0,
+                    "passage_text": "Apple beat estimates.",
+                    "tickers": ["AAPL"],
+                },
+                {
+                    "newsletter_id": f"perplexity:AAPL:{day}",
+                    "passage_index": 1,
+                    "passage_text": "Apple settled.",
+                    "tickers": ["AAPL"],
+                },
+            ],
+            "newsletter_id,passage_index",
+            True,
+        )
+    ]
+
+
 def test_news_is_fetched_once_per_symbol_and_day_and_tagged_with_its_symbol() -> None:
-    supabase = FakeSupabase({"newsletters": [[{"id": "perplexity:GOOGL:2026-11-10"}]]})
+    supabase = FakeSupabase(
+        {
+            "newsletters": [[{"id": "perplexity:GOOGL:2026-11-10", "body_text": "Google settled."}]],
+            "newsletter_passages": [[{"newsletter_id": "perplexity:GOOGL:2026-11-10"}]],
+        }
+    )
     fetched_at = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
     asked: list[tuple[str, list[str]]] = []
 
@@ -708,7 +755,10 @@ def test_news_is_fetched_once_per_symbol_and_day_and_tagged_with_its_symbol() ->
 
     assert load_news(supabase, fetch, WATCHLIST, date(2026, 11, 10)) == (2, 1, 2)
     assert asked == [("AAPL", ["Apple"]), ("NVDA", [])]
-    assert supabase.selects == [("newsletters", {"source": "eq.perplexity", "id": "like.*:2026-11-10"})]
+    assert supabase.selects == [
+        ("newsletters", {"source": "eq.perplexity", "id": "like.*:2026-11-10"}),
+        ("newsletter_passages", {"newsletter_id": "like.perplexity:*:2026-11-10"}),
+    ]
     apple, apple_passages, nvidia, nvidia_passages = supabase.upserts
     assert apple == (
         "newsletters",
