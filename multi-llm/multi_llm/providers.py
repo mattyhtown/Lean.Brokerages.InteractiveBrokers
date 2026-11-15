@@ -7,6 +7,8 @@ from typing import Mapping
 
 # Sentiment classifiers return label scores, not generated text.
 CLASSIFICATION_PROTOCOL = "hf_text_classification"
+WATSONX_PROTOCOL = "watsonx_chat"
+WATSONX_PROJECT_ENV = "WATSONX_PROJECT_ID"
 
 
 @dataclass(frozen=True)
@@ -266,12 +268,13 @@ PROVIDERS: dict[str, ProviderSpec] = {
         api_key_envs=("AWS_BEARER_TOKEN_BEDROCK",),
         endpoint_env="AWS_REGION",
     ),
-    "watsonx": _chat(
-        "watsonx",
-        "IBM watsonx.ai",
-        "ibm/granite-3-8b-instruct",
-        "https://us-south.ml.cloud.ibm.com",
-        "WATSONX_API_KEY",
+    "watsonx": ProviderSpec(
+        name="watsonx",
+        display_name="IBM watsonx.ai",
+        protocol=WATSONX_PROTOCOL,
+        default_model="ibm/granite-3-8b-instruct",
+        base_url="https://us-south.ml.cloud.ibm.com",
+        api_key_envs=("WATSONX_ACCESS_TOKEN",),
         endpoint_env="WATSONX_URL",
     ),
     "vertex_openai": _chat(
@@ -424,8 +427,9 @@ def is_provider_configured(spec: ProviderSpec, env: Mapping[str, str] | None = N
         return bool(endpoint and deployment and resolve_api_key(spec, source))
     if spec.name == "ollama":
         return True
+    if spec.protocol == WATSONX_PROTOCOL:
+        return bool(source.get(WATSONX_PROJECT_ENV, "").strip() and resolve_api_key(spec, source))
     if spec.name in (
-        "watsonx",
         "databricks",
         "snowflake_cortex",
         "baseten",

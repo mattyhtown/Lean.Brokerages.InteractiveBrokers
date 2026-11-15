@@ -56,4 +56,19 @@ poetry run multi-llm chat --provider finbert --prompt "Shares surged after the c
 - `--system`, `--max-tokens`, `--temperature` and `--attach-mcp` do not apply to it.
 - `fanout --all-configured` skips it, so a question sent to every chat model is not also scored for sentiment. Name it in `--providers` to include it.
 
+### IBM watsonx.ai
+
+`watsonx` calls the native chat endpoint (`/ml/v1/text/chat`), which takes an IAM bearer token and a project id rather than the IBM Cloud API key itself. Exchange the API key for a token (valid for about an hour) and export both:
+
+```bash
+export WATSONX_ACCESS_TOKEN=$(curl -s https://iam.cloud.ibm.com/identity/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=urn:ibm:params:oauth:grant-type:apikey" \
+  --data-urlencode "apikey=$IBM_CLOUD_API_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+export WATSONX_PROJECT_ID=...
+poetry run multi-llm chat --provider watsonx --prompt "Summarize today's macro risk"
+```
+
+`WATSONX_URL` is optional and selects the region host (default `https://us-south.ml.cloud.ibm.com`).
+
 Aliases: `claude`, `gpt`, `chatgpt`, `grok`, `kimi`, `qwen`, `glm`, `hf`, `vllm`, `lmstudio`, `vertex`, `snowflake`, etc. (`poetry run multi-llm chat --provider kimi` → Moonshot).

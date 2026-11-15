@@ -445,6 +445,69 @@ def test_openai_mcp_approval_request_is_surfaced_alongside_output_text() -> None
     )
 
 
+def test_watsonx_uses_native_chat_endpoint_with_project_id() -> None:
+    env = {"WATSONX_ACCESS_TOKEN": "iam-token-test", "WATSONX_PROJECT_ID": "proj-123"}
+    req = ChatRequest(provider="watson", prompt="Hello", system="Be brief")
+    spec, url, headers, body, _ = build_wire_request(req, env=env)
+    assert spec.name == "watsonx"
+    assert url == "https://us-south.ml.cloud.ibm.com/ml/v1/text/chat?version=2024-10-08"
+    assert headers == {"Authorization": "Bearer iam-token-test"}
+    assert body["model_id"] == "ibm/granite-3-8b-instruct"
+    assert body["project_id"] == "proj-123"
+    assert "model" not in body
+    assert body["messages"] == [
+        {"role": "system", "content": "Be brief"},
+        {"role": "user", "content": "Hello"},
+    ]
+
+    resp = complete(
+        req,
+        env=env,
+        transport=lambda _u, _h, _b, _t: {
+            "model_id": "ibm/granite-3-8b-instruct",
+            "choices": [{"message": {"role": "assistant", "content": "watsonx answer"}}],
+        },
+    )
+    assert resp.text == "watsonx answer"
+    assert resp.model == "ibm/granite-3-8b-instruct"
+
+
+@pytest.mark.parametrize(
+    "custom_url",
+    ["https://eu-de.ml.cloud.ibm.com", "https://eu-de.ml.cloud.ibm.com/ml/v1/"],
+)
+def test_watsonx_region_url_with_or_without_api_path(custom_url: str) -> None:
+    env = {
+        "WATSONX_ACCESS_TOKEN": "iam-token-test",
+        "WATSONX_PROJECT_ID": "proj-123",
+        "WATSONX_URL": custom_url,
+    }
+    _, url, _, _, _ = build_wire_request(ChatRequest(provider="watsonx", prompt="Hi"), env=env)
+    assert url == "https://eu-de.ml.cloud.ibm.com/ml/v1/text/chat?version=2024-10-08"
+
+
+def test_watsonx_requires_token_and_project_id() -> None:
+    with pytest.raises(LLMError, match="WATSONX_ACCESS_TOKEN"):
+        build_wire_request(
+            ChatRequest(provider="watsonx", prompt="Hi"),
+            env={"WATSONX_API_KEY": "ibm-cloud-api-key", "WATSONX_PROJECT_ID": "proj-123"},
+        )
+    with pytest.raises(LLMError, match="WATSONX_PROJECT_ID"):
+        build_wire_request(
+            ChatRequest(provider="watsonx", prompt="Hi"),
+            env={"WATSONX_ACCESS_TOKEN": "iam-token-test"},
+        )
+
+    by_name = {
+        row["provider"]: row
+        for row in list_provider_statuses(env={"WATSONX_ACCESS_TOKEN": "iam-token-test"})
+    }
+    assert by_name["watsonx"]["configured"] is False
+    assert "watsonx" in list_configured_chat_providers(
+        env={"WATSONX_ACCESS_TOKEN": "iam-token-test", "WATSONX_PROJECT_ID": "proj-123"}
+    )
+
+
 def test_fanout_shuts_down_its_thread_pool() -> None:
     before = {t.ident for t in threading.enumerate()}
 

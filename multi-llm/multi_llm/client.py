@@ -12,7 +12,14 @@ import urllib.parse
 import urllib.request
 
 from multi_llm.mcp_templates import SUPABASE_MCP_URL, UNUSUAL_WHALES_MCP_URL
-from multi_llm.providers import CLASSIFICATION_PROTOCOL, ProviderSpec, get_provider, resolve_api_key
+from multi_llm.providers import (
+    CLASSIFICATION_PROTOCOL,
+    WATSONX_PROJECT_ENV,
+    WATSONX_PROTOCOL,
+    ProviderSpec,
+    get_provider,
+    resolve_api_key,
+)
 
 TransportCallable = Callable[[str, dict[str, str], dict[str, object], int], object]
 
@@ -49,6 +56,8 @@ _AZURE_OPENAI_ENDPOINT_RE = re.compile(
     re.IGNORECASE,
 )
 _ANTHROPIC_MCP_BETA = "mcp-client-2025-11-20"
+# watsonx.ai requires a dated version query parameter on every request.
+_WATSONX_API_VERSION = "2024-10-08"
 # Each segment must start with an alphanumeric, which rules out "." and ".." path segments.
 _HF_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?$")
 
@@ -319,6 +328,29 @@ def build_wire_request(
         }
         if req.system:
             body["system"] = [{"text": req.system}]
+        return spec, url, headers, body, secrets
+
+    if spec.protocol == WATSONX_PROTOCOL:
+        project_id = source.get(WATSONX_PROJECT_ENV, "").strip()
+        if not project_id:
+            raise LLMError(f"Missing {WATSONX_PROJECT_ENV} for provider '{spec.name}'")
+        custom_host = source.get(spec.endpoint_env or "", "").strip()
+        host = _validate_base_url(custom_host or spec.base_url, allow_http_loopback=False)
+        # The API path is appended here, so accept a WATSONX_URL that already ends in it.
+        host = host.removesuffix("/ml/v1")
+        url = f"{host}/ml/v1/text/chat?version={_WATSONX_API_VERSION}"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        messages = []
+        if req.system:
+            messages.append({"role": "system", "content": req.system})
+        messages.append({"role": "user", "content": req.prompt})
+        body = {
+            "model_id": model,
+            "project_id": project_id,
+            "messages": messages,
+            "max_tokens": req.max_tokens,
+            "temperature": req.temperature,
+        }
         return spec, url, headers, body, secrets
 
     base_url = spec.base_url
