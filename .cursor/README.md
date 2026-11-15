@@ -44,7 +44,7 @@ Merge [`clients/claude_desktop_config.json.example`](clients/claude_desktop_conf
 For Supabase and Unusual Whales in **Claude.ai Web / Desktop Integrations**, you can also connect via OAuth using `https://mcp.supabase.com/mcp` and `https://mcp.unusualwhales.com` ([Unusual Whales AI Apps](https://unusualwhales.com/ai-apps)).
 
 ### Anthropic Messages API (Remote MCP Connector)
-Pass `anthropic-beta: mcp-client-2025-04-04` with `mcp_servers` pointing to `https://api.unusualwhales.com/api/mcp` (`authorization_token: UW_API_KEY`) and `https://mcp.supabase.com/mcp` (`authorization_token: SUPABASE_ACCESS_TOKEN`). The `multi-llm` package builds this payload automatically (`poetry run multi-llm chat --provider anthropic --attach-mcp uw,supabase ...`).
+Pass `anthropic-beta: mcp-client-2025-11-20` with matching `mcp_servers` and `mcp_toolset` entries pointing to `https://api.unusualwhales.com/api/mcp` (`authorization_token: UW_API_KEY`) and `https://mcp.supabase.com/mcp` (`authorization_token: SUPABASE_ACCESS_TOKEN`). The `multi-llm` package builds this payload automatically (`cd multi-llm && poetry run multi-llm chat --provider anthropic --attach-mcp uw,supabase ...`).
 
 ---
 
@@ -68,13 +68,13 @@ Attach hosted MCP servers directly in `tools` (`type: "mcp"`, `server_url: "http
 | Ecosystem / Client | Config / Integration Path | Template / Command |
 |--------------------|---------------------------|--------------------|
 | **Google Gemini CLI & SDK** | `~/.gemini/settings.json` (`httpUrl` + stdio `mcpServers`) | [`clients/gemini_settings.json.example`](clients/gemini_settings.json.example) |
-| **xAI Grok** | Grok Web OAuth (`mcp.unusualwhales.com`) or xAI API (`XAI_API_KEY`) | `poetry run multi-llm chat --provider xai ...` |
+| **xAI Grok** | Grok Web OAuth (`mcp.unusualwhales.com`) or xAI API (`XAI_API_KEY`) | `cd multi-llm && poetry run multi-llm chat --provider xai ...` |
 | **VS Code / GitHub Copilot** | `.vscode/mcp.json` using encrypted `${input:...}` secret prompts | [`clients/vscode_mcp.json.example`](clients/vscode_mcp.json.example) |
-| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` (`serverUrl` / stdio) | `poetry run multi-llm mcp-config --target windsurf` |
-| **Zed** | `~/.config/zed/settings.json` (`context_servers`) | `poetry run multi-llm mcp-config --target zed` |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` (`serverUrl` / stdio) | `cd multi-llm && poetry run multi-llm mcp-config --target windsurf` |
+| **Zed** | `~/.config/zed/settings.json` (`context_servers`) | `cd multi-llm && poetry run multi-llm mcp-config --target zed` |
 | **Mistral / Cohere / DeepSeek** | Native HTTPS chat APIs + MCP tool bridge | `MISTRAL_API_KEY`, `COHERE_API_KEY`, `DEEPSEEK_API_KEY` |
 | **Groq / Together / Fireworks / Cerebras / Perplexity** | High-throughput OpenAI-compatible inference APIs | `GROQ_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `CEREBRAS_API_KEY`, `PERPLEXITY_API_KEY` |
-| **OpenRouter (300+ LLMs: Llama, Qwen, Nova, etc.)** | Unified `openrouter.ai/api/v1` gateway | `OPENROUTER_API_KEY` (`poetry run multi-llm chat --provider openrouter`) |
+| **OpenRouter (300+ LLMs: Llama, Qwen, Nova, etc.)** | Unified `openrouter.ai/api/v1` gateway | `OPENROUTER_API_KEY` (`cd multi-llm && poetry run multi-llm chat --provider openrouter`) |
 | **Azure OpenAI & AWS Bedrock** | Enterprise cloud deployments (`api-key` / Converse API) | `AZURE_OPENAI_*`, `AWS_BEARER_TOKEN_BEDROCK` |
 | **Ollama / vLLM / LM Studio / SGLang** | Local open-weight models (`http://127.0.0.1:11434/v1`) | `OLLAMA_BASE_URL` / `OPENAI_COMPATIBLE_BASE_URL` |
 

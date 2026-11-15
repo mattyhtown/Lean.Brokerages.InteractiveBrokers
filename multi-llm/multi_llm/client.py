@@ -43,6 +43,56 @@ def _bedrock_runtime_url(region: str, encoded_model: str) -> str:
     return f"https://{host}/model/{encoded_model}/converse"
 
 
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+_AZURE_OPENAI_ENDPOINT_RE = re.compile(
+    r"^https://[a-z0-9][\w.-]*\.(openai\.azure\.com|cognitiveservices\.azure\.com)(/|$)",
+    re.IGNORECASE,
+)
+_ANTHROPIC_MCP_BETA = "mcp-client-2025-11-20"
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    lowered = hostname.lower()
+    if lowered in _LOOPBACK_HOSTS:
+        return True
+    if lowered.startswith("127."):
+        return True
+    return lowered.endswith(".localhost")
+
+
+def _validate_base_url(url: str, *, allow_http_loopback: bool) -> str:
+    cleaned = url.strip().rstrip("/")
+    parsed = urllib.parse.urlparse(cleaned)
+    if parsed.scheme not in ("https", "http") or not parsed.netloc:
+        raise LLMError(f"Invalid provider URL: {url!r}")
+    if parsed.scheme == "http" and not (allow_http_loopback and _is_loopback_host(parsed.hostname)):
+        raise LLMError(f"Refusing HTTP provider URL (use HTTPS): {url!r}")
+    return cleaned
+
+
+def _validate_azure_openai_endpoint(endpoint: str) -> str:
+    cleaned = endpoint.strip().rstrip("/")
+    if not _AZURE_OPENAI_ENDPOINT_RE.match(cleaned):
+        raise LLMError(
+            f"Invalid AZURE_OPENAI_ENDPOINT: {endpoint!r} "
+            "(expected https://<resource>.openai.azure.com)"
+        )
+    return cleaned
+
+
+def _assert_credential_transport_safe(url: str, headers: dict[str, str]) -> None:
+    if not headers.get("Authorization") and not headers.get("api-key"):
+        return
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and _is_loopback_host(parsed.hostname):
+        return
+    raise LLMError(f"Refusing to send API credentials over non-HTTPS URL: {url}")
+
+
 @dataclass(frozen=True)
 class ChatRequest:
     provider: str
@@ -83,6 +133,7 @@ def _default_transport(
     parsed_url = urllib.parse.urlparse(url)
     if parsed_url.scheme not in ("https", "http") or not parsed_url.netloc:
         raise LLMError(f"Refusing non-HTTP(S) provider URL: {url}")
+    _assert_credential_transport_safe(url, headers)
     encoded = json.dumps(body).encode("utf-8")
     req_headers = {"Content-Type": "application/json", "Accept": "application/json", **headers}
     request = urllib.request.Request(url, data=encoded, headers=req_headers, method="POST")
@@ -157,7 +208,7 @@ def build_wire_request(
         if req.system:
             body["system"] = req.system
         if mcp_entries:
-            headers["anthropic-beta"] = "mcp-client-2025-04-04"
+            headers["anthropic-beta"] = _ANTHROPIC_MCP_BETA
             body["mcp_servers"] = [
                 {
                     "type": "url",
@@ -166,6 +217,10 @@ def build_wire_request(
                     "authorization_token": token,
                 }
                 for label, server_url, token in mcp_entries
+            ]
+            body["tools"] = [
+                {"type": "mcp_toolset", "mcp_server_name": label}
+                for label, _, _ in mcp_entries
             ]
         return spec, spec.base_url, headers, body, secrets
 
@@ -186,7 +241,7 @@ def build_wire_request(
                     "server_label": label,
                     "server_url": server_url,
                     "headers": {"Authorization": f"Bearer {token}"},
-                    "require_approval": "never",
+                    "require_approval": "always",
                 }
                 for label, server_url, token in mcp_entries
             ]
@@ -222,10 +277,16 @@ def build_wire_request(
         return spec, spec.base_url, headers, body, secrets
 
     if spec.protocol == "azure_openai":
-        endpoint = source.get(spec.endpoint_env or "", "").strip().rstrip("/")
-        if not endpoint:
+        endpoint_raw = source.get(spec.endpoint_env or "", "").strip()
+        if not endpoint_raw:
             raise LLMError("Missing AZURE_OPENAI_ENDPOINT for provider 'azure_openai'")
-        deployment = req.model or source.get(spec.deployment_env or "", "").strip() or spec.default_model
+        endpoint = _validate_azure_openai_endpoint(endpoint_raw)
+        deployment = req.model or source.get(spec.deployment_env or "", "").strip()
+        if not deployment:
+            raise LLMError(
+                "Missing AZURE_OPENAI_DEPLOYMENT for provider 'azure_openai' "
+                "(set AZURE_OPENAI_DEPLOYMENT or pass --model)"
+            )
         encoded_dep = urllib.parse.quote(deployment, safe="-._")
         url = f"{endpoint}/openai/deployments/{encoded_dep}/chat/completions?api-version=2024-10-21"
         headers = {"api-key": api_key or ""}
@@ -269,7 +330,9 @@ def build_wire_request(
         fallback = source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
         if fallback:
             base_url = fallback
-    url = f"{base_url.rstrip('/')}/chat/completions"
+    allow_http_loopback = spec.name in ("ollama", "openai_compatible")
+    base_url = _validate_base_url(base_url, allow_http_loopback=allow_http_loopback)
+    url = f"{base_url}/chat/completions"
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -300,12 +363,28 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
     if spec.protocol == "openai_responses":
         if isinstance(data.get("output_text"), str) and data["output_text"]:
             return ChatResponse(spec.name, str(data.get("model") or model), str(data["output_text"]), data)
+        status = str(data.get("status", "")).lower()
+        if status in ("failed", "cancelled", "incomplete"):
+            detail = data.get("incomplete_details") or data.get("error")
+            if isinstance(detail, dict):
+                message = detail.get("message") or detail.get("reason")
+                if isinstance(message, str) and message.strip():
+                    return ChatResponse(
+                        spec.name,
+                        str(data.get("model") or model),
+                        f"[{status}: {message.strip()}]",
+                        data,
+                    )
         output_items = data.get("output")
-        parts = []
+        parts: list[str] = []
         if isinstance(output_items, list):
             for item in output_items:
                 if not isinstance(item, dict):
                     continue
+                if item.get("type") == "message" and item.get("status") == "refusal":
+                    refusal = item.get("refusal")
+                    if isinstance(refusal, str) and refusal.strip():
+                        parts.append(f"[refusal: {refusal.strip()}]")
                 content = item.get("content")
                 if isinstance(content, list):
                     for chunk in content:
@@ -314,11 +393,29 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
         return ChatResponse(spec.name, str(data.get("model") or model), "\n".join(parts).strip(), data)
 
     if spec.protocol == "google_gemini":
+        feedback = data.get("promptFeedback")
+        if isinstance(feedback, dict):
+            block = feedback.get("blockReason")
+            if isinstance(block, str) and block.strip():
+                return ChatResponse(
+                    spec.name,
+                    str(data.get("modelVersion") or model),
+                    f"[blocked: {block.strip()}]",
+                    data,
+                )
         candidates = data.get("candidates")
         parts = []
         if isinstance(candidates, list) and candidates:
             first = candidates[0]
             if isinstance(first, dict):
+                finish = first.get("finishReason")
+                if isinstance(finish, str) and finish.upper() in ("SAFETY", "RECITATION", "BLOCKLIST"):
+                    return ChatResponse(
+                        spec.name,
+                        str(data.get("modelVersion") or model),
+                        f"[blocked: {finish}]",
+                        data,
+                    )
                 content = first.get("content")
                 if isinstance(content, dict) and isinstance(content.get("parts"), list):
                     for part in content["parts"]:
@@ -352,8 +449,12 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
         first = choices[0]
         if isinstance(first, dict):
             msg = first.get("message")
-            if isinstance(msg, dict) and isinstance(msg.get("content"), str):
-                text = msg["content"].strip()
+            if isinstance(msg, dict):
+                refusal = msg.get("refusal")
+                if isinstance(refusal, str) and refusal.strip():
+                    text = f"[refusal: {refusal.strip()}]"
+                elif isinstance(msg.get("content"), str):
+                    text = msg["content"].strip()
     return ChatResponse(spec.name, str(data.get("model") or model), text, data)
 
 
@@ -418,5 +519,14 @@ def fanout_complete(
             }
 
     max_workers = min(8, len(providers))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        return list(pool.map(_call_one, providers))
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    futures = [pool.submit(_call_one, name) for name in providers]
+    try:
+        return [future.result() for future in futures]
+    except KeyboardInterrupt:
+        for future in futures:
+            future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        pool.shutdown(wait=True)

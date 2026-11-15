@@ -415,7 +415,10 @@ def is_provider_configured(spec: ProviderSpec, env: Mapping[str, str] | None = N
     source = os.environ if env is None else env
     if spec.protocol == "azure_openai":
         endpoint = source.get(spec.endpoint_env or "", "").strip()
-        return bool(endpoint and resolve_api_key(spec, source))
+        deployment = source.get(spec.deployment_env or "", "").strip()
+        return bool(endpoint and deployment and resolve_api_key(spec, source))
+    if spec.name == "ollama":
+        return True
     if spec.name in ("watsonx", "databricks", "snowflake_cortex", "baseten", "lepton", "vertex_openai"):
         custom_endpoint = source.get(spec.endpoint_env or "", "").strip()
         return bool(custom_endpoint and resolve_api_key(spec, source))

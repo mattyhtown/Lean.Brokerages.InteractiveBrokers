@@ -5,7 +5,13 @@ import pytest
 
 from multi_llm.cli import main as cli_main
 from multi_llm.client import ChatRequest, LLMError, build_wire_request, complete, fanout_complete
-from multi_llm.mcp_templates import SUPPORTED_TARGETS, render_mcp_config
+from multi_llm.mcp_templates import (
+    SUPPORTED_TARGETS,
+    SUPABASE_MCP_URL,
+    UNUSUAL_WHALES_MCP_URL,
+    UNUSUAL_WHALES_NPX_PACKAGE,
+    render_mcp_config,
+)
 from multi_llm.providers import ALL_PROVIDER_NAMES, PROVIDERS, get_provider, list_provider_statuses
 
 
@@ -75,11 +81,14 @@ def test_anthropic_wire_request_with_remote_mcp_and_response() -> None:
     assert spec.name == "anthropic"
     assert url == "https://api.anthropic.com/v1/messages"
     assert headers["x-api-key"] == "sk-ant-test"
-    assert headers["anthropic-beta"] == "mcp-client-2025-04-04"
+    assert headers["anthropic-beta"] == "mcp-client-2025-11-20"
     assert body["system"] == "Be concise"
     mcp_servers = body["mcp_servers"]
     assert isinstance(mcp_servers, list) and len(mcp_servers) == 2
-    assert mcp_servers[0]["url"] == "https://api.unusualwhales.com/api/mcp"
+    assert mcp_servers[0]["url"] == UNUSUAL_WHALES_MCP_URL
+    tools = body["tools"]
+    assert isinstance(tools, list) and len(tools) == 2
+    assert all(item.get("type") == "mcp_toolset" for item in tools)
 
     resp = complete(
         req,
@@ -100,7 +109,8 @@ def test_openai_responses_wire_request_with_remote_mcp() -> None:
     assert headers["Authorization"] == "Bearer sk-openai-test"
     tools = body["tools"]
     assert isinstance(tools, list) and tools[0]["type"] == "mcp"
-    assert tools[0]["server_url"] == "https://api.unusualwhales.com/api/mcp"
+    assert tools[0]["server_url"] == UNUSUAL_WHALES_MCP_URL
+    assert tools[0]["require_approval"] == "always"
 
     resp = complete(
         req,
@@ -201,15 +211,41 @@ def test_cohere_azure_bedrock_and_ollama() -> None:
             },
         )
 
-    ollama_resp = complete(
-        ChatRequest(provider="ollama", prompt="Local"),
-        env={"OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1"},
-        transport=lambda _u, _h, _b, _t: {
+    captured_url: dict[str, str] = {}
+
+    def ollama_transport(u: str, _h: dict[str, str], _b: dict[str, object], _t: int) -> dict[str, object]:
+        captured_url["url"] = u
+        return {
             "model": "llama3.2",
             "choices": [{"message": {"content": "Local llama ok"}}],
-        },
+        }
+
+    ollama_resp = complete(
+        ChatRequest(provider="ollama", prompt="Local"),
+        env={"OLLAMA_BASE_URL": "http://127.0.0.1:22434/v1"},
+        transport=ollama_transport,
     )
     assert ollama_resp.text == "Local llama ok"
+    assert captured_url["url"] == "http://127.0.0.1:22434/v1/chat/completions"
+
+    with pytest.raises(LLMError, match="AZURE_OPENAI_DEPLOYMENT"):
+        build_wire_request(
+            ChatRequest(provider="azure_openai", prompt="Hi"),
+            env={
+                "AZURE_OPENAI_ENDPOINT": "https://my-resource.openai.azure.com",
+                "AZURE_OPENAI_API_KEY": "az-key",
+            },
+        )
+
+    with pytest.raises(LLMError, match="Invalid AZURE_OPENAI_ENDPOINT"):
+        build_wire_request(
+            ChatRequest(provider="azure_openai", prompt="Hi"),
+            env={
+                "AZURE_OPENAI_ENDPOINT": "https://evil.com",
+                "AZURE_OPENAI_API_KEY": "az-key",
+                "AZURE_OPENAI_DEPLOYMENT": "gpt-4.1-prod",
+            },
+        )
 
 
 def test_secret_redaction_on_transport_failure() -> None:
@@ -251,21 +287,29 @@ def test_mcp_templates_use_official_servers_and_no_shadow_mcps(target: str) -> N
     assert "@modelcontextprotocol/server-" not in rendered
     assert "unusualwhales.com/public-api/mcp" not in rendered
     assert "unusualwhales" in rendered
+    assert UNUSUAL_WHALES_MCP_URL in rendered or UNUSUAL_WHALES_NPX_PACKAGE in rendered
+    assert SUPABASE_MCP_URL in rendered
 
 
 def test_cli_providers_and_mcp_config(capsys: pytest.CaptureFixture[str]) -> None:
     cli_main(["providers", "--json"])
     out = json.loads(capsys.readouterr().out)
     assert len(out) == len(ALL_PROVIDER_NAMES)
+    provider_ids = [row["provider"] for row in out]
+    assert provider_ids == list(ALL_PROVIDER_NAMES)
+    for row in out:
+        assert isinstance(row["display_name"], str) and row["display_name"]
+        assert isinstance(row["default_model"], str) and row["default_model"]
+        assert isinstance(row["configured"], bool)
 
     cli_main(["mcp-config", "--target", "codex"])
     codex_toml = capsys.readouterr().out
     assert "[mcp_servers.unusualwhales]" in codex_toml
-    assert "https://api.unusualwhales.com/api/mcp" in codex_toml
+    assert UNUSUAL_WHALES_MCP_URL in codex_toml
 
 
 def test_rejects_non_http_url_scheme() -> None:
-    with pytest.raises(LLMError, match="Refusing non-HTTP"):
+    with pytest.raises(LLMError, match="Invalid provider URL"):
         complete(
             ChatRequest(provider="ollama", prompt="test"),
             env={"OLLAMA_BASE_URL": "file:///etc/passwd"},

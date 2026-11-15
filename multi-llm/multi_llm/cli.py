@@ -122,6 +122,8 @@ def main(argv: list[str] | None = None) -> None:
                 temperature=args.temperature,
             )
             print(json.dumps(results, indent=2, ensure_ascii=False))
+            if not any(bool(row.get("ok")) for row in results):
+                raise SystemExit(1)
             return
 
     except (LLMError, ValueError) as exc:

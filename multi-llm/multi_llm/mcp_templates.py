@@ -4,8 +4,8 @@ import json
 
 SUPABASE_MCP_URL = "https://mcp.supabase.com/mcp"
 UNUSUAL_WHALES_MCP_URL = "https://api.unusualwhales.com/api/mcp"
-MONGODB_NPX_PACKAGE = "mongodb-mcp-server@latest"
-UNUSUAL_WHALES_NPX_PACKAGE = "@unusualwhales/mcp"
+MONGODB_NPX_PACKAGE = "mongodb-mcp-server@3.3.0"
+UNUSUAL_WHALES_NPX_PACKAGE = "@unusualwhales/mcp@1.2.0"
 
 SUPPORTED_TARGETS: tuple[str, ...] = (
     "cursor",
@@ -55,6 +55,11 @@ def render_mcp_config(target: str) -> str:
     if normalized == "claude-desktop":
         payload = {
             "mcpServers": {
+                "supabase": {
+                    "type": "url",
+                    "url": SUPABASE_MCP_URL,
+                    "headers": {"Authorization": "Bearer YOUR_SUPABASE_ACCESS_TOKEN"},
+                },
                 "unusualwhales": {
                     "command": "npx",
                     "args": ["-y", UNUSUAL_WHALES_NPX_PACKAGE],
@@ -88,21 +93,35 @@ def render_mcp_config(target: str) -> str:
 
     if normalized == "anthropic-api":
         payload = {
-            "headers": {"anthropic-beta": "mcp-client-2025-04-04"},
-            "mcp_servers": [
-                {
-                    "type": "url",
-                    "name": "supabase",
-                    "url": SUPABASE_MCP_URL,
-                    "authorization_token": "YOUR_SUPABASE_ACCESS_TOKEN",
-                },
-                {
-                    "type": "url",
-                    "name": "unusualwhales",
-                    "url": UNUSUAL_WHALES_MCP_URL,
-                    "authorization_token": "YOUR_UW_API_KEY",
-                },
-            ],
+            "_note": "POST to https://api.anthropic.com/v1/messages; set these HTTP headers separately (not in the JSON body).",
+            "http_headers": {
+                "anthropic-beta": "mcp-client-2025-11-20",
+                "anthropic-version": "2023-06-01",
+                "x-api-key": "YOUR_ANTHROPIC_API_KEY",
+            },
+            "request_body": {
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "Your prompt"}],
+                "mcp_servers": [
+                    {
+                        "type": "url",
+                        "name": "supabase",
+                        "url": SUPABASE_MCP_URL,
+                        "authorization_token": "YOUR_SUPABASE_ACCESS_TOKEN",
+                    },
+                    {
+                        "type": "url",
+                        "name": "unusualwhales",
+                        "url": UNUSUAL_WHALES_MCP_URL,
+                        "authorization_token": "YOUR_UW_API_KEY",
+                    },
+                ],
+                "tools": [
+                    {"type": "mcp_toolset", "mcp_server_name": "supabase"},
+                    {"type": "mcp_toolset", "mcp_server_name": "unusualwhales"},
+                ],
+            },
         }
         return json.dumps(payload, indent=2)
 
@@ -135,14 +154,14 @@ def render_mcp_config(target: str) -> str:
                     "server_label": "supabase",
                     "server_url": SUPABASE_MCP_URL,
                     "headers": {"Authorization": "Bearer YOUR_SUPABASE_ACCESS_TOKEN"},
-                    "require_approval": "never",
+                    "require_approval": "always",
                 },
                 {
                     "type": "mcp",
                     "server_label": "unusualwhales",
                     "server_url": UNUSUAL_WHALES_MCP_URL,
                     "headers": {"Authorization": "Bearer YOUR_UW_API_KEY"},
-                    "require_approval": "never",
+                    "require_approval": "always",
                 },
             ]
         }
@@ -235,6 +254,12 @@ def render_mcp_config(target: str) -> str:
 
     payload = {
         "context_servers": {
+            "supabase": {
+                "settings": {
+                    "url": SUPABASE_MCP_URL,
+                    "headers": {"Authorization": "Bearer YOUR_SUPABASE_ACCESS_TOKEN"},
+                }
+            },
             "unusualwhales": {
                 "command": {
                     "path": "npx",
