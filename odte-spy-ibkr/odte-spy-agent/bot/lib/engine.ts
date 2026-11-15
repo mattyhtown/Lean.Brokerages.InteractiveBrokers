@@ -49,6 +49,9 @@ export const FORCED_ENV: Record<string, string> = {
   IMPROVEMENT_AUTO_PROMOTE_PAPER: "false",
   // `lean data download --yes` buys files with the organization's QCC balance.
   QUANTCONNECT_ALLOW_PAID_DOWNLOAD: "false",
+  // The engine would otherwise also read a .env in its directory: settings
+  // and credentials outside this allowlist, with values redaction never saw.
+  ODTE_NO_DOTENV: "1",
   CONFIG_YAML: SAFETY_YAML_PATH,
   PYTHONUNBUFFERED: "1",
 };

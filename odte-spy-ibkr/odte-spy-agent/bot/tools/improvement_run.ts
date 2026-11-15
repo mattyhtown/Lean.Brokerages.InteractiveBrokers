@@ -10,6 +10,9 @@ export default defineTool({
     it is. decision is the engine's promotion rule applied to that record,
     and qualifiedForPaperPromotion says whether the best challenger cleared
     the Sharpe target and margin (null when the decision could not be read).
+    chainCoverage says which option chains the scores rest on, as in
+    backtest: a challenger scored on substituted chains has not qualified
+    on market evidence.
   `,
   effect: "write",
   async execute() {

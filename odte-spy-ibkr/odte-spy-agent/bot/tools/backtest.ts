@@ -8,9 +8,15 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "use YYYY-MM-DD");
 export default defineTool({
   description: prompt`
     Run the historical backtest (python -m odte_spy_ibkr.backtest) and apply
-    the rolling Sharpe check. Returns the summary and whether the check
-    passed. A day with no cached option chain uses a synthetic chain when
-    alpacaKeysPresent is false, so that result is not market evidence.
+    the rolling Sharpe check. Returns the summary, whether the check passed,
+    and chainCoverage: where each session's option chain came from. Only
+    research_chain_sessions were simulated on that day's own chain, from
+    the research cache. A cached chain is whatever an earlier backtest
+    stored under that date. A session with no chain gets
+    no_chain_substitute: Alpaca's current snapshot, which is today's chain
+    and not that day's, or a synthetic chain. Neither is market evidence.
+    chainCoverage is null when it could not be read. The range may span at
+    most 400 days.
   `,
   inputSchema: z.object({
     from: isoDate,
@@ -19,7 +25,8 @@ export default defineTool({
     walkForward: z.boolean().default(false).describe("Score only the holdout test window."),
     verbose: z.boolean().default(false).describe("Include per-session no-entry reasons."),
   }),
-  effect: "read",
+  // It caches the chains, bars and headlines it fetches in the engine folder.
+  effect: "write",
   async execute(input) {
     return backtest(input);
   },

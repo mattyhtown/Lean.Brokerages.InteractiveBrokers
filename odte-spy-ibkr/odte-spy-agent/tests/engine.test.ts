@@ -19,6 +19,7 @@ test("safety flags are fixed whatever the host environment says", () => {
     IMPROVEMENT_AUTO_PROMOTE_PAPER: "true",
     QUANTCONNECT_ALLOW_PAID_DOWNLOAD: "true",
     CONFIG_YAML: "/tmp/attacker.yaml",
+    ODTE_NO_DOTENV: "0",
   });
   assert.equal(env.ENABLE_ORDERS, "false");
   assert.equal(env.LIVE_TRADING, "false");
@@ -28,6 +29,8 @@ test("safety flags are fixed whatever the host environment says", () => {
   assert.equal(env.IMPROVEMENT_AUTO_PROMOTE_PAPER, "false");
   assert.equal(env.QUANTCONNECT_ALLOW_PAID_DOWNLOAD, "false");
   assert.equal(env.CONFIG_YAML, SAFETY_YAML_PATH);
+  // The engine's own .env would bring in settings this allowlist left out.
+  assert.equal(env.ODTE_NO_DOTENV, "1");
 });
 
 test("the engine environment is an allowlist", () => {

@@ -21,7 +21,7 @@ export default defineTool({
       .min(1)
       .max(120)
       .optional()
-      .describe("Run 1 only. The engine default is 8."),
+      .describe("Run 1 only. Defaults to 8."),
   }),
   effect: "read",
   async execute(input) {

@@ -28,7 +28,9 @@ def main() -> None:
             "quantconnect",
             "all",
         ],
-        default=["alpaca"],
+        # argparse appends to a list default, so ["alpaca"] here would run
+        # alpaca on every ingest. The default is applied after parsing.
+        default=None,
         help="Repeat for multiple sources; default alpaca only",
     )
     ing.add_argument("--start", type=date.fromisoformat, default=None)
@@ -46,7 +48,7 @@ def main() -> None:
     if args.cmd == "ingest":
         end = args.end or date.today()
         start = args.start or (end - timedelta(days=args.days))
-        paths = run_ingest(settings, sources=list(args.source), start=start, end=end)
+        paths = run_ingest(settings, sources=args.source or ["alpaca"], start=start, end=end)
         print(json.dumps(paths, indent=2))
         return
     if args.cmd == "evaluate":

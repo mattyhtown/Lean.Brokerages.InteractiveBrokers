@@ -10,7 +10,7 @@ An agent SDK (`@grok/agent-sdk`) project that runs the research side of the
 | `signal_state` | `python -m odte_spy_ibkr.hosted_state` | read |
 | `research_ingest` | `python -m odte_spy_ibkr.research ingest` (alpaca, uw, orats, tradingeconomics, quantconnect) | write |
 | `research_evaluate` | `python -m odte_spy_ibkr.research evaluate` | read |
-| `backtest` | `python -m odte_spy_ibkr.backtest --require-rolling-sharpe` | read |
+| `backtest` | `python -m odte_spy_ibkr.backtest --require-rolling-sharpe` | write (its own cache) |
 | `improvement_run` | `python -m odte_spy_ibkr.improvement run` | write |
 
 There is no order tool. The model has no built-in tools (`tools: []`), so it
@@ -24,7 +24,19 @@ has no shell and cannot edit files. Every engine process is started by
   to `false`;
 - points `CONFIG_YAML` at `bot/lib/engine-safety.yaml`, which the engine
   applies after the environment;
+- sets `ODTE_NO_DOTENV=1`, so the engine does not read a `.env` in its
+  folder. Keys for a local run go in the shell that starts the agent;
 - redacts secret values from the output it returns.
+
+Ingest, evaluate, backtest and improvement jobs started by one agent process
+run one at a time: the engine reads and writes its cache files without
+locking. A second process on the same engine folder is not coordinated.
+
+`backtest` and `improvement_run` return `chainCoverage`. The engine simulates
+a session on that day's own option chain only when the research cache has
+one (ORATS or Unusual Whales ingest). For any other session it uses a chain
+an earlier backtest cached, Alpaca's current snapshot, or a synthetic chain,
+and none of those is evidence about that day.
 
 ## What it cannot do
 

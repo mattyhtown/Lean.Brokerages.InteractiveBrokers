@@ -326,7 +326,13 @@ class Settings(BaseSettings):
 
 
 def load_settings() -> Settings:
-    settings = Settings()
+    # A host that builds the whole process environment itself (the hosted
+    # agent) sets ODTE_NO_DOTENV, so a .env in the working directory cannot
+    # add settings or credentials that host never passed.
+    if os.environ.get("ODTE_NO_DOTENV", "").strip().lower() in {"1", "true", "yes", "on"}:
+        settings = Settings(_env_file=None)
+    else:
+        settings = Settings()
     yaml_path = settings.config_yaml or os.environ.get("CONFIG_YAML", "")
     if not yaml_path:
         candidate = Path("config.yaml")

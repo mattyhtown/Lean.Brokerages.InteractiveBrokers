@@ -28,10 +28,9 @@ afterEach(async () => {
 });
 
 /** Stands in for the Python engine. No process is started. */
-function deps(fake: FakeEngine, env: NodeJS.ProcessEnv = {}): OperationDeps {
+function deps(fake: FakeEngine): OperationDeps {
   return {
     engineDir,
-    env,
     run: async (request) => {
       calls.push(request);
       return {
@@ -94,6 +93,16 @@ test("research_ingest runs the research CLI and summarizes what it wrote", async
   assert.deepEqual(result.sources[1]?.summary, { days_flow: 2, days_chain: 0, errors: [] });
 });
 
+test("research_ingest names each source once, however often it was asked for", async () => {
+  const result = await researchIngest(
+    { sources: ["uw", "orats", "uw"], days: 5 },
+    deps(() => ({ stdout: JSON.stringify({ uw: {}, orats: {} }, null, 2) })),
+  );
+  assert.deepEqual(calls[0]?.args, ["ingest", "--source", "uw", "--source", "orats", "--days", "5"]);
+  assert.ok(result.ok);
+  assert.deepEqual(result.sourcesRequested, ["uw", "orats"]);
+});
+
 test("research_ingest caps a long path map", async () => {
   const paths = Object.fromEntries(
     Array.from({ length: 40 }, (_, i) => [`2026-09-${String(i + 1).padStart(2, "0")}`, `m${i}.json`]),
@@ -121,6 +130,47 @@ test("research_ingest reports a missing credential as a failure with the log tai
   assert.ok(!result.ok);
   assert.equal(result.error, "engine_failed");
   assert.match(result.logTail.join("\n"), /ALPACA_API_KEY and ALPACA_API_SECRET are required/);
+  // An earlier source in the same run may already have written its files.
+  assert.equal("cacheMayHaveChanged" in result && result.cacheMayHaveChanged, true);
+});
+
+test("research_ingest that never started cannot have changed the cache", async () => {
+  const result = await researchIngest(
+    { sources: ["alpaca"] },
+    deps(() => ({ exitCode: null, spawnError: "spawn python3 ENOENT" })),
+  );
+  assert.ok(!result.ok);
+  assert.equal("cacheMayHaveChanged" in result && result.cacheMayHaveChanged, false);
+});
+
+test("a date range the engine should not walk is refused before it starts", async () => {
+  const never = deps(() => ({}));
+  const refused = [
+    await researchIngest({ sources: ["uw"], start: "2026-11-05", end: "2026-11-02" }, never),
+    await researchIngest({ sources: ["uw"], start: "1900-01-01", end: "2026-11-05" }, never),
+    // No end: the engine would run from 1900 to today.
+    await researchIngest({ sources: ["uw"], start: "1900-01-01" }, never),
+    await researchIngest({ sources: ["uw"], end: "2026-02-30" }, never),
+    await backtest({ ...backtestInput, from: "2026-11-05", to: "2026-11-02" }, never),
+    await backtest({ ...backtestInput, from: "2020-01-01", to: "2026-11-05" }, never),
+    await backtest({ ...backtestInput, from: "2026-13-01" }, never),
+  ];
+  const details = refused.map((result) => {
+    assert.ok(!result.ok);
+    assert.equal(result.error, "invalid_input");
+    return result.detail;
+  });
+  assert.match(details[0]!, /2026-11-05 is after 2026-11-02/);
+  assert.match(details[1]!, /the limit is 400/);
+  assert.match(details[3]!, /2026-02-30 is not a calendar date/);
+  assert.equal(calls.length, 0);
+});
+
+test("a range of exactly the limit, and one starting today, are allowed", async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const ok = deps(() => ({ stdout: JSON.stringify({ uw: {} }, null, 2) }));
+  assert.ok((await researchIngest({ sources: ["uw"], start: "2025-10-01", end: "2026-11-05" }, ok)).ok);
+  assert.ok((await researchIngest({ sources: ["uw"], start: today }, ok)).ok);
 });
 
 test("a host without Python or the engine dependencies is reported as engine_unavailable", async () => {
@@ -172,6 +222,19 @@ test("research_evaluate passes the tail holdout size for run 1", async () => {
   assert.equal(result.holdoutDays, 8);
 });
 
+test("research_evaluate reports the run-1 holdout size it used when none was given", async () => {
+  const result = await researchEvaluate(
+    { run: 1 },
+    deps(async (request) => {
+      await writeFile(argAfter(request, "--report"), "# Research\n");
+      return {};
+    }),
+  );
+  assert.equal(argAfter(calls[0]!, "--holdout-days"), "8");
+  assert.ok(result.ok);
+  assert.equal(result.holdoutDays, 8);
+});
+
 test("research_evaluate fails when the cache is too thin for the engine to run", async () => {
   const result = await researchEvaluate(
     { run: 2 },
@@ -189,47 +252,81 @@ const backtestInput = {
   verbose: false,
 };
 
+const COVERAGE = {
+  from: "2026-07-01",
+  to: "2026-11-05",
+  sessions: 92,
+  research_chain_sessions: 30,
+  cached_chain_sessions: 2,
+  no_chain_sessions: 60,
+  no_chain_substitute: "alpaca_current_snapshot",
+};
+
+/** A backtest CLI that writes `report`, behind a coverage check that prints `coverage`. */
+function backtestEngine(
+  report: unknown,
+  run: Partial<EngineRun> = {},
+  coverage: unknown = COVERAGE,
+): FakeEngine {
+  return async (request) => {
+    if (request.module === "odte_spy_ibkr.hosted_state") {
+      return coverage === null ? { exitCode: 1 } : { stdout: `${JSON.stringify(coverage)}\n` };
+    }
+    if (report !== undefined) {
+      await writeFile(argAfter(request, "--report-json"), JSON.stringify(report));
+    }
+    return run;
+  };
+}
+
 test("backtest passes the rolling Sharpe requirement and reports a pass", async () => {
   const result = await backtest(
     backtestInput,
-    deps(
-      async (request) => {
-        await writeFile(
-          argAfter(request, "--report-json"),
-          JSON.stringify({ max_rolling_sharpe: 1.8, trade_count: 12 }),
-        );
-        return { exitCode: 0 };
-      },
-      { ALPACA_API_KEY: "k", ALPACA_API_SECRET: "s" },
-    ),
+    deps(backtestEngine({ max_rolling_sharpe: 1.8, trade_count: 12 })),
   );
-  assert.equal(calls[0]?.module, "odte_spy_ibkr.backtest");
-  assert.equal(argAfter(calls[0]!, "--require-rolling-sharpe"), "1.5");
-  assert.ok(calls[0]?.args.includes("--walk-forward"));
-  assert.equal(calls[0]?.args.includes("--verbose"), false);
+  // Coverage is read first: the backtest caches the chains it fetches.
+  assert.deepEqual(calls[0], {
+    module: "odte_spy_ibkr.hosted_state",
+    args: ["--chain-coverage", "2026-07-01", "2026-11-05"],
+    timeoutMs: 60_000,
+  });
+  assert.equal(calls[1]?.module, "odte_spy_ibkr.backtest");
+  assert.equal(argAfter(calls[1]!, "--require-rolling-sharpe"), "1.5");
+  assert.ok(calls[1]?.args.includes("--walk-forward"));
+  assert.equal(calls[1]?.args.includes("--verbose"), false);
   assert.ok(result.ok);
   assert.deepEqual(result.sharpeCheck, { requiredRollingSharpe: 1.5, passed: true });
   assert.equal(result.summary.max_rolling_sharpe, 1.8);
-  assert.equal(result.alpacaKeysPresent, true);
+  assert.deepEqual(result.chainCoverage, COVERAGE);
 });
 
 test("backtest exit 1 with a report is a failed Sharpe check, not an error", async () => {
   const result = await backtest(
     backtestInput,
-    deps(async (request) => {
-      await writeFile(argAfter(request, "--report-json"), JSON.stringify({ max_rolling_sharpe: 0.4 }));
-      return { exitCode: 1 };
-    }),
+    deps(backtestEngine({ max_rolling_sharpe: 0.4 }, { exitCode: 1 })),
   );
   assert.ok(result.ok);
   assert.equal(result.sharpeCheck.passed, false);
-  assert.equal(result.alpacaKeysPresent, false);
+});
+
+test("backtest still reports when chain coverage could not be read, as unknown", async () => {
+  const result = await backtest(
+    backtestInput,
+    deps(backtestEngine({ max_rolling_sharpe: 1.8 }, {}, null)),
+  );
+  assert.ok(result.ok);
+  assert.equal(result.chainCoverage, null);
 });
 
 test("backtest exit 1 without a report is an engine failure", async () => {
   const result = await backtest(
     backtestInput,
-    deps(() => ({ exitCode: 1, stderr: "Traceback (most recent call last):\nKeyError: 'close'" })),
+    deps(
+      backtestEngine(undefined, {
+        exitCode: 1,
+        stderr: "Traceback (most recent call last):\nKeyError: 'close'",
+      }),
+    ),
   );
   assert.ok(!result.ok);
   assert.equal(result.error, "engine_failed");
@@ -239,14 +336,43 @@ test("backtest keeps only the most recent sessions of a long verbose run", async
   const sessions = Array.from({ length: 90 }, (_, i) => ({ date: `d${i}`, reason: "no_entry" }));
   const result = await backtest(
     { ...backtestInput, verbose: true },
-    deps(async (request) => {
-      await writeFile(argAfter(request, "--report-json"), JSON.stringify({ sessions }));
-      return {};
-    }),
+    deps(backtestEngine({ sessions })),
   );
   assert.ok(result.ok);
   assert.equal(result.sessionsTruncated, true);
   assert.equal((result.summary.sessions as unknown[]).length, 60);
+});
+
+test("engine jobs of different kinds never overlap on the shared cache", async () => {
+  let active = 0;
+  let maxActive = 0;
+  const engine: FakeEngine = async (request) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    active -= 1;
+    if (request.module === "odte_spy_ibkr.backtest") {
+      await writeFile(argAfter(request, "--report-json"), "{}");
+    }
+    if (request.args.includes("--report")) {
+      await writeFile(argAfter(request, "--report"), "# Research\n");
+    }
+    return { stdout: JSON.stringify({ uw: {} }, null, 2) };
+  };
+  const shared = deps(engine);
+  const results = await Promise.all([
+    researchIngest({ sources: ["uw"], days: 5 }, shared),
+    backtest(backtestInput, shared),
+    researchEvaluate({ run: 2 }, shared),
+    researchIngest({ sources: ["orats"], days: 5 }, shared),
+  ]);
+  assert.deepEqual(results.map((result) => result.ok), [true, true, true, true]);
+  assert.equal(maxActive, 1);
+  // Started in the order they were asked for.
+  assert.deepEqual(
+    calls.map((call) => call.module.replace("odte_spy_ibkr.", "")),
+    ["research", "hosted_state", "backtest", "research", "research"],
+  );
 });
 
 async function seedParams(): Promise<string> {
@@ -275,6 +401,9 @@ function improvementEngine(options: {
       // The real CLI prints nothing on a successful run.
       return {};
     }
+    if (request.args[0] === "--improvement-chain-coverage") {
+      return { stdout: `${JSON.stringify(COVERAGE)}\n` };
+    }
     if (options.decision === "crash" || options.decision === undefined) {
       return { exitCode: 1, stderr: "Traceback (most recent call last):\nValueError" };
     }
@@ -295,6 +424,11 @@ test("improvement_run returns the new history record and leaves active params al
   };
   const result = await improvementRun(deps(improvementEngine({ record, decision })));
   assert.deepEqual(calls, [
+    {
+      module: "odte_spy_ibkr.hosted_state",
+      args: ["--improvement-chain-coverage"],
+      timeoutMs: 60_000,
+    },
     { module: "odte_spy_ibkr.improvement", args: ["run"], timeoutMs: 15 * 60_000 },
     {
       module: "odte_spy_ibkr.hosted_state",
@@ -309,6 +443,7 @@ test("improvement_run returns the new history record and leaves active params al
   assert.equal(result.decisionReason, "paper_auto_promote_disabled");
   assert.equal(result.qualifiedForPaperPromotion, true);
   assert.equal(result.activeParamsChanged, false);
+  assert.deepEqual(result.chainCoverage, COVERAGE);
   assert.equal(await readFile(activePath, "utf8"), "version: 1\n");
 });
 
@@ -353,6 +488,9 @@ test("improvement runs queue, so each one reports its own history record", async
   let maxActive = 0;
   let serial = 0;
   const engine: FakeEngine = async (request) => {
+    if (request.args[0] === "--improvement-chain-coverage") {
+      return { exitCode: 1 };
+    }
     if (request.module !== "odte_spy_ibkr.improvement") {
       const record = JSON.parse(await readFile(argAfter(request, "--promotion-check"), "utf8"));
       return { stdout: JSON.stringify({ reason: `decision_for_${record.best_candidate}` }) };
@@ -383,7 +521,10 @@ test("improvement runs queue, so each one reports its own history record", async
 test("improvement_run refuses to guess when two history records changed", async () => {
   await seedParams();
   const result = await improvementRun(
-    deps(async () => {
+    deps(async (request) => {
+      if (request.module !== "odte_spy_ibkr.improvement") {
+        return { exitCode: 1 };
+      }
       for (const name of ["20261115T090000Z.json", "20261115T090001Z.json"]) {
         await writeFile(path.join(engineDir, "params", "history", name), "{}");
       }
@@ -393,7 +534,11 @@ test("improvement_run refuses to guess when two history records changed", async 
   assert.ok(!result.ok);
   assert.equal(result.error, "bad_engine_output");
   assert.match(result.detail, /2 history records changed/);
-  assert.equal(calls.length, 1, "no promotion check on a record that may not be this run's");
+  assert.equal(
+    calls.some((call) => call.args[0] === "--promotion-check"),
+    false,
+    "no promotion check on a record that may not be this run's",
+  );
 });
 
 test("improvement_run recognizes a record rewritten under the same second's name", async () => {

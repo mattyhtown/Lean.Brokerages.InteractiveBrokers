@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from odte_spy_ibkr.config import Settings
+from odte_spy_ibkr.research import __main__ as research_cli
 from odte_spy_ibkr.research import ibkr_ingest, orats_ingest, thetadata_ingest, tradingeconomics_ingest, uw_ingest
 from odte_spy_ibkr.tradingeconomics.client import normalize_te_event
 from odte_spy_ibkr.research.orats_ingest import orats_rows_to_chain_candidates
@@ -106,3 +107,22 @@ def test_orats_client_mock_no_network():
         )
         rows = client.strikes_chain_at("SPY", date(2026, 7, 1))
         assert rows and rows[0]["strike"] == "620"
+
+@pytest.mark.parametrize(
+    ("argv", "sources"),
+    [
+        ([], ["alpaca"]),
+        (["--source", "alpaca"], ["alpaca"]),
+        (["--source", "uw"], ["uw"]),
+        (["--source", "uw", "--source", "orats"], ["uw", "orats"]),
+    ],
+)
+def test_ingest_cli_runs_the_sources_named_and_alpaca_only_by_default(monkeypatch, argv, sources):
+    monkeypatch.setattr("sys.argv", ["research", "ingest", *argv])
+    with (
+        patch.object(research_cli, "load_settings", return_value=Settings(_env_file=None)),
+        patch.object(research_cli, "setup_logging"),
+        patch.object(research_cli, "run_ingest", return_value={}) as run_ingest,
+    ):
+        research_cli.main()
+    assert run_ingest.call_args.kwargs["sources"] == sources

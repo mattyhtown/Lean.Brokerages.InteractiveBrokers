@@ -11,14 +11,12 @@ import {
 export type OperationDeps = {
   run: EngineRunner;
   engineDir: string;
-  env: NodeJS.ProcessEnv;
 };
 
 export function defaultDeps(): OperationDeps {
   return {
     run: createEngineRunner(process.env),
     engineDir: resolveEngineDir(process.env),
-    env: process.env,
   };
 }
 
@@ -26,7 +24,7 @@ type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 
 type Failure = {
   ok: false;
-  error: "engine_unavailable" | "timeout" | "engine_failed" | "bad_engine_output";
+  error: "invalid_input" | "engine_unavailable" | "timeout" | "engine_failed" | "bad_engine_output";
   detail: string;
   exitCode: number | null;
   logTail: string[];
@@ -36,6 +34,11 @@ const LOG_TAIL_LINES = 40;
 const MAX_REPORT_CHARS = 20_000;
 const MAX_SESSIONS = 60;
 const MAX_SUMMARY_ENTRIES = 12;
+const MAX_RANGE_DAYS = 400;
+const DAY_MS = 86_400_000;
+// What the engine uses for run 1 when --holdout-days is omitted. Passing it
+// keeps the size this reports the size the engine used.
+const RUN1_DEFAULT_HOLDOUT_DAYS = 8;
 
 function tail(text: string, lines = LOG_TAIL_LINES): string[] {
   return text
@@ -71,21 +74,77 @@ function failureOf(run: EngineRun): Failure {
   return failure(run, "engine_failed", `engine exited with code ${String(run.exitCode)}`);
 }
 
-/** The research CLI prints log lines, then one indented JSON object. */
-function parseTrailingJsonObject(stdout: string): Record<string, Json> | null {
-  const lines = stdout.split("\n");
-  const start = lines.lastIndexOf("{");
-  if (start === -1) {
-    return null;
-  }
+function parseJsonObject(text: string): Record<string, Json> | null {
   try {
-    const parsed: unknown = JSON.parse(lines.slice(start).join("\n"));
+    const parsed: unknown = JSON.parse(text);
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Record<string, Json>)
       : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The research CLI prints log lines, then one JSON object indented by two
+ * spaces, so the only line that is exactly "{" opens that object.
+ */
+function parseTrailingJsonObject(stdout: string): Record<string, Json> | null {
+  const lines = stdout.split("\n");
+  const start = lines.lastIndexOf("{");
+  return start === -1 ? null : parseJsonObject(lines.slice(start).join("\n"));
+}
+
+/** A request refused before any engine process is started. */
+function invalidInput(detail: string): Failure {
+  return { ok: false, error: "invalid_input", detail, exitCode: null, logTail: [] };
+}
+
+function isoDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** Milliseconds for a YYYY-MM-DD that names a real day, else null. */
+function parseDay(value: string): number | null {
+  const ms = Date.parse(`${value}T00:00:00Z`);
+  // Date.parse rolls 2026-02-30 over into March; a real day round-trips.
+  return Number.isNaN(ms) || isoDay(ms) !== value ? null : ms;
+}
+
+/** Why the engine should not be asked to walk start..end, or null. */
+function rangeIssue(start: string, end: string): string | null {
+  const from = parseDay(start);
+  const to = parseDay(end);
+  if (from === null || to === null) {
+    return `${from === null ? start : end} is not a calendar date`;
+  }
+  if (from > to) {
+    return `${start} is after ${end}`;
+  }
+  const days = Math.round((to - from) / DAY_MS);
+  return days > MAX_RANGE_DAYS
+    ? `${start} to ${end} spans ${days} days; the limit is ${MAX_RANGE_DAYS}`
+    : null;
+}
+
+// Engine jobs read and write the same cache files with no locking, and the
+// engine names an improvement record by the second. So the jobs this process
+// starts run one at a time. Jobs started by another process are not covered.
+let engineQueue: Promise<unknown> = Promise.resolve();
+
+function queued<T>(job: () => Promise<T>): Promise<T> {
+  const result = engineQueue.then(job);
+  engineQueue = result.catch(() => undefined);
+  return result;
+}
+
+/**
+ * Where the backtest behind a job will get its option chains. Asked before
+ * the job, because a backtest caches the chains it fetches. null: not known.
+ */
+async function chainCoverage(deps: OperationDeps, args: string[]) {
+  const run = await deps.run({ module: "odte_spy_ibkr.hosted_state", args, timeoutMs: 60_000 });
+  return run.exitCode === 0 ? parseJsonObject(run.stdout) : null;
 }
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -122,8 +181,28 @@ export type ResearchIngestInput = {
   days?: number;
 };
 
+function ingestRangeIssue(input: ResearchIngestInput): string | null {
+  if (input.start === undefined) {
+    return input.end !== undefined && parseDay(input.end) === null
+      ? `${input.end} is not a calendar date`
+      : null;
+  }
+  // The engine's default end is its local today, at most a day past UTC's.
+  return rangeIssue(input.start, input.end ?? isoDay(Date.now() + DAY_MS));
+}
+
 export async function researchIngest(input: ResearchIngestInput, deps = defaultDeps()) {
-  const args = ["ingest", ...input.sources.flatMap((source) => ["--source", source])];
+  const issue = ingestRangeIssue(input);
+  if (issue !== null) {
+    return invalidInput(issue);
+  }
+  return queued(() => runIngest(input, deps));
+}
+
+async function runIngest(input: ResearchIngestInput, deps: OperationDeps) {
+  // The engine runs a source once per mention.
+  const requested = [...new Set(input.sources)];
+  const args = ["ingest", ...requested.flatMap((source) => ["--source", source])];
   if (input.start !== undefined) {
     args.push("--start", input.start);
   }
@@ -139,7 +218,9 @@ export async function researchIngest(input: ResearchIngestInput, deps = defaultD
     timeoutMs: 20 * 60_000,
   });
   if (run.exitCode !== 0) {
-    return failureOf(run);
+    // Sources run in order and each writes as it goes, so one that finished
+    // before the failure has already changed the cache.
+    return { ...failureOf(run), cacheMayHaveChanged: run.spawnError === null };
   }
   const written = parseTrailingJsonObject(run.stdout);
   if (written === null) {
@@ -161,7 +242,7 @@ export async function researchIngest(input: ResearchIngestInput, deps = defaultD
   });
   return {
     ok: true as const,
-    sourcesRequested: input.sources,
+    sourcesRequested: requested,
     sourcesRun: sources.map((entry) => entry.source),
     sources,
     cacheDir: path.join(deps.engineDir, "data", "research"),
@@ -170,11 +251,16 @@ export async function researchIngest(input: ResearchIngestInput, deps = defaultD
 
 export type ResearchEvaluateInput = { run: 1 | 2; holdoutDays?: number };
 
-export async function researchEvaluate(input: ResearchEvaluateInput, deps = defaultDeps()) {
+export function researchEvaluate(input: ResearchEvaluateInput, deps = defaultDeps()) {
+  return queued(() => runEvaluate(input, deps));
+}
+
+function runEvaluate(input: ResearchEvaluateInput, deps: OperationDeps) {
   return withTempDir(async (dir) => {
     const reportPath = path.join(dir, "research-report.md");
     // The engine ignores --holdout-days for run 2, whose holdout is fixed.
-    const holdoutDays = input.run === 1 ? (input.holdoutDays ?? null) : null;
+    const holdoutDays =
+      input.run === 1 ? (input.holdoutDays ?? RUN1_DEFAULT_HOLDOUT_DAYS) : null;
     const args = ["evaluate", "--run", String(input.run)];
     if (holdoutDays !== null) {
       args.push("--holdout-days", String(holdoutDays));
@@ -211,7 +297,16 @@ export type BacktestInput = {
 };
 
 export async function backtest(input: BacktestInput, deps = defaultDeps()) {
+  const issue = rangeIssue(input.from, input.to);
+  if (issue !== null) {
+    return invalidInput(issue);
+  }
+  return queued(() => runBacktest(input, deps));
+}
+
+function runBacktest(input: BacktestInput, deps: OperationDeps) {
   return withTempDir(async (dir) => {
+    const coverage = await chainCoverage(deps, ["--chain-coverage", input.from, input.to]);
     const reportPath = path.join(dir, "backtest.json");
     const args = [
       "--from",
@@ -259,7 +354,7 @@ export async function backtest(input: BacktestInput, deps = defaultDeps()) {
       },
       summary,
       sessionsTruncated,
-      alpacaKeysPresent: Boolean(deps.env.ALPACA_API_KEY && deps.env.ALPACA_API_SECRET),
+      chainCoverage: coverage,
     };
   });
 }
@@ -277,20 +372,17 @@ async function historySnapshot(dir: string): Promise<Map<string, number>> {
   return snapshot;
 }
 
-// The engine names a history record by the second and prints nothing, so a
-// record is matched to its run by what changed on disk. That only holds for
-// one run at a time: runs in this process queue here.
-let improvementQueue: Promise<unknown> = Promise.resolve();
-
 export function improvementRun(deps = defaultDeps()) {
-  const result = improvementQueue.then(() => runImprovement(deps));
-  improvementQueue = result.catch(() => undefined);
-  return result;
+  return queued(() => runImprovement(deps));
 }
 
+// The engine names a history record by the second and prints nothing, so a
+// record is matched to its run by what changed on disk. That only holds for
+// one run at a time, which the queue gives within this process.
 async function runImprovement(deps: OperationDeps) {
   const historyDir = path.join(deps.engineDir, "params", "history");
   const activePath = path.join(deps.engineDir, "params", "active.yaml");
+  const coverage = await chainCoverage(deps, ["--improvement-chain-coverage"]);
   const historyBefore = await historySnapshot(historyDir);
   const activeBefore = await readIfExists(activePath);
 
@@ -337,14 +429,7 @@ async function runImprovement(deps: OperationDeps) {
     args: ["--promotion-check", historyPath],
     timeoutMs: 60_000,
   });
-  let decision: Record<string, Json> | null = null;
-  if (check.exitCode === 0) {
-    try {
-      decision = JSON.parse(check.stdout) as Record<string, Json>;
-    } catch {
-      decision = null;
-    }
-  }
+  const decision = check.exitCode === 0 ? parseJsonObject(check.stdout) : null;
   const decisionReason = typeof decision?.reason === "string" ? decision.reason : null;
   return {
     ok: true as const,
@@ -357,6 +442,7 @@ async function runImprovement(deps: OperationDeps) {
     qualifiedForPaperPromotion:
       decisionReason === null ? null : decisionReason === "paper_auto_promote_disabled",
     activeParamsChanged: (await readIfExists(activePath)) !== activeBefore,
+    chainCoverage: coverage,
   };
 }
 

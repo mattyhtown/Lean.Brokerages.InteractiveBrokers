@@ -2,11 +2,13 @@
 
 ``python -m odte_spy_ibkr.hosted_state`` prints the current signal and gate
 state. With ``--promotion-check <history.json>`` it prints the promotion
-decision the engine reaches for that improvement record.
+decision the engine reaches for that improvement record. With
+``--chain-coverage FROM TO`` or ``--improvement-chain-coverage`` it prints
+where a backtest over those sessions would get its option chains.
 
-Neither connects to IB, places orders, writes the journal or changes the
-active params. Anything that needs an IB session is reported as unavailable
-instead of estimated.
+None of them connects to IB, places orders, writes the journal or changes
+the active params. Anything that needs an IB session is reported as
+unavailable instead of estimated.
 """
 
 from __future__ import annotations
@@ -15,18 +17,23 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from odte_spy_ibkr.backtest.calendar import iter_trading_days
+from odte_spy_ibkr.backtest.data_loader import _cache_path
 from odte_spy_ibkr.config import Settings, load_settings
+from odte_spy_ibkr.improvement.evaluator import LOOKBACK_DAYS
 from odte_spy_ibkr.improvement.promoter import should_promote
 from odte_spy_ibkr.improvement.registry import load_active_params
-from odte_spy_ibkr.providers.aggregate import MarketContextAggregator
+from odte_spy_ibkr.providers.aggregate import MarketContextAggregator, merge_deltas
 from odte_spy_ibkr.providers.base import BaseProvider, MarketContext
 from odte_spy_ibkr.providers.registry import build_providers
+from odte_spy_ibkr.research.chain_io import load_chain_rows
 from odte_spy_ibkr.research.ingest import log_credential_status
+from odte_spy_ibkr.research.paths import CHAIN_ROOT
 from odte_spy_ibkr.risk import ET, RiskLimits, RiskState, check_new_entry
 from odte_spy_ibkr.risk.sharpe_gate import allow_new_entries, sharpe_gate_state
 from odte_spy_ibkr.strategy.flow_gate import evaluate_flow_gate
@@ -50,15 +57,16 @@ def _provider_status(provider: BaseProvider, ctx: MarketContext) -> dict[str, An
 def build_state(settings: Settings, *, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(tz=timezone.utc)
     providers = build_providers(settings, None)
-    ctx = MarketContextAggregator(providers, underlying=settings.underlying).build()
-    statuses = {p.provider_id: _provider_status(p, ctx) for p in providers}
+    aggregator = MarketContextAggregator(providers, underlying=settings.underlying)
+    seed = MarketContext(underlying=settings.underlying)
+    deltas = aggregator.fetch_deltas(seed)
+    ctx = merge_deltas(seed, deltas, aggregator.default_weights)
 
-    def contributed(provider_id: str) -> bool:
-        return bool(statuses.get(provider_id, {}).get("contributed", False))
+    # A merged field no provider set still holds its MarketContext default.
+    def supplied(*fields: str) -> bool:
+        return any(all(getattr(d, f) is not None for f in fields) for d in deltas)
 
-    flow_available = contributed("unusual_whales")
-    macro_news_available = contributed("macro_news")
-    macro_risk_available = macro_news_available or contributed("coinbase")
+    flow_available = supplied("flow_bias", "flow_strength")
     macro = evaluate_macro_gate(settings, ctx)
     flow = evaluate_flow_gate(settings, ctx, now=now)
     limits = RiskLimits(
@@ -96,7 +104,7 @@ def build_state(settings: Settings, *, now: datetime | None = None) -> dict[str,
         },
         "ib_session": {"available": False, "reason": IB_UNAVAILABLE_REASON},
         "credentials_present": log_credential_status(settings),
-        "providers": list(statuses.values()),
+        "providers": [_provider_status(p, ctx) for p in providers],
         "signal": {
             "spot": ctx.spot,
             "flow_bias": ctx.flow_bias.value if flow_available else None,
@@ -105,10 +113,14 @@ def build_state(settings: Settings, *, now: datetime | None = None) -> dict[str,
             "net_call_bias_unavailable_reason": (
                 None if ctx.chain_skew is not None else "live 0DTE chain comes from the IB session"
             ),
-            "macro_risk_off": ctx.macro_risk_off if macro_risk_available else None,
-            "macro_headline_score": ctx.macro_headline_score if macro_news_available else None,
-            "macro_event_blackout": ctx.macro_event_blackout if macro_news_available else None,
-            "vol_regime": ctx.vol_regime.value,
+            "macro_risk_off": ctx.macro_risk_off if supplied("macro_risk_off") else None,
+            "macro_headline_score": (
+                ctx.macro_headline_score if supplied("macro_headline_score") else None
+            ),
+            "macro_event_blackout": (
+                ctx.macro_event_blackout if supplied("macro_event_blackout") else None
+            ),
+            "vol_regime": ctx.vol_regime.value if supplied("vol_regime") else None,
         },
         "gates": {
             "risk": {
@@ -120,7 +132,11 @@ def build_state(settings: Settings, *, now: datetime | None = None) -> dict[str,
                 "decision": macro.decision.value,
                 "reason": macro.reason,
                 "size_scale": macro.size_scale,
-                "inputs_available": macro_risk_available,
+                "inputs_available": (
+                    supplied("macro_risk_off")
+                    or supplied("macro_headline_score")
+                    or supplied("macro_event_blackout")
+                ),
             },
             "flow": {
                 "decision": flow.decision.value,
@@ -175,20 +191,73 @@ def promotion_check(settings: Settings, history_path: str | Path) -> dict[str, A
     }
 
 
+def chain_coverage(settings: Settings, start: date, end: date) -> dict[str, Any]:
+    """Where a backtest of ``start``..``end`` would get each session's option chain.
+
+    Follows the lookup order of ``backtest.data_loader.load_chain_for_day`` and
+    only reads, so it has to run before the backtest: the backtest caches what
+    it fetches. Only a research chain is that session's own chain. A cached one
+    is whatever an earlier backtest stored under that date, and a session with
+    neither gets the engine's substitute.
+    """
+    research = cached = missing = 0
+    days = iter_trading_days(start, end)
+    for day in days:
+        cache = _cache_path(settings, settings.underlying, day)
+        if load_chain_rows(day, snapshot="signal", root=CHAIN_ROOT):
+            research += 1
+        elif cache.is_file() or cache.with_suffix(".json").is_file():
+            cached += 1
+        else:
+            missing += 1
+    return {
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "sessions": len(days),
+        "research_chain_sessions": research,
+        "cached_chain_sessions": cached,
+        "no_chain_sessions": missing,
+        "no_chain_substitute": (
+            "alpaca_current_snapshot"
+            if settings.alpaca_api_key and settings.alpaca_api_secret
+            else "synthetic"
+        ),
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Read-only engine state for hosts with no IB session")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--promotion-check",
         metavar="HISTORY_JSON",
         help="Print the promotion decision for this improvement history record instead of the state.",
+    )
+    mode.add_argument(
+        "--chain-coverage",
+        nargs=2,
+        type=date.fromisoformat,
+        metavar=("FROM", "TO"),
+        help="Print where a backtest of these sessions would get its option chains.",
+    )
+    mode.add_argument(
+        "--improvement-chain-coverage",
+        action="store_true",
+        help="The same, for the sessions an improvement run started today scores.",
     )
     args = parser.parse_args(argv)
     settings = load_settings()
     logging.basicConfig(stream=sys.stderr, level=getattr(logging, settings.log_level.upper(), logging.INFO))
     if args.promotion_check:
-        print(json.dumps(promotion_check(settings, args.promotion_check), default=str))
+        result = promotion_check(settings, args.promotion_check)
+    elif args.chain_coverage:
+        result = chain_coverage(settings, *args.chain_coverage)
+    elif args.improvement_chain_coverage:
+        today = date.today()
+        result = chain_coverage(settings, today - timedelta(days=LOOKBACK_DAYS), today)
     else:
-        print(json.dumps(build_state(settings), default=str))
+        result = build_state(settings)
+    print(json.dumps(result, default=str))
 
 
 if __name__ == "__main__":

@@ -14,9 +14,9 @@ export default defineTool({
     Each source needs its secret set on this deployment and spends that
     provider's API quota. quantconnect here only checks the login and
     imports LEAN files already on disk: the paid download is switched off,
-    so on a fresh disk it imports nothing. The engine CLI currently runs
-    alpaca on every ingest as well as the sources asked for, so every
-    ingest needs the Alpaca keys; sourcesRun lists what actually ran.
+    so on a fresh disk it imports nothing. A start-to-end range may span
+    at most 400 days. A failure with cacheMayHaveChanged true can leave
+    the files of the sources that finished before it in the cache.
     Not sources here: ibkr needs a TWS or Gateway session and thetadata
     needs a Theta Terminal on the same machine. This agent has neither.
   `,
