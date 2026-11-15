@@ -1,0 +1,109 @@
+{
+  "asOf": "2026-11-14T15:42:18-05:00",
+  "brand": "ODTE Desk",
+  "symbol": "SPY",
+  "mode": "strict",
+  "safety": {
+    "liveTrading": false,
+    "readOnly": true,
+    "enableOrders": false,
+    "ordersLockedReason": "ENABLE_ORDERS is false — UI cannot arm live placement",
+    "killSwitchArmed": true,
+    "killSwitchLabel": "HARD KILL — flatten + block entries"
+  },
+  "spot": 682.14,
+  "gates": {
+    "sharpe": {
+      "id": "sharpe",
+      "label": "Rolling Sharpe",
+      "status": "pass",
+      "value": 1.72,
+      "threshold": 1.5,
+      "detail": "60d rolling ≥ 1.5"
+    },
+    "macro": {
+      "id": "macro",
+      "label": "Macro gate",
+      "status": "pass",
+      "value": 0.22,
+      "threshold": 0.75,
+      "detail": "Headline intensity below block"
+    },
+    "flow": {
+      "id": "flow",
+      "label": "UW flow gate",
+      "status": "watch",
+      "value": 0.41,
+      "threshold": 0.35,
+      "detail": "alerts_only — bias aligned put-credit"
+    },
+    "risk": {
+      "id": "risk",
+      "label": "Risk limits",
+      "status": "pass",
+      "value": 1,
+      "threshold": 4,
+      "detail": "1/4 contracts · PnL −$120 / −$1500"
+    }
+  },
+  "flatten": {
+    "flattenTimeEt": "15:45",
+    "entryCutoffEt": "15:15",
+    "shouldFlatten": false,
+    "minutesToFlatten": 3,
+    "rth": true
+  },
+  "positions": [],
+  "signals": [
+    {
+      "id": "sig-1",
+      "side": "put_credit",
+      "summary": "Put credit 680/679 · mid credit 0.18",
+      "strength": 0.62,
+      "blocked": false,
+      "reason": "flow_ok;macro_ok;skew_bullish"
+    },
+    {
+      "id": "sig-2",
+      "side": "call_credit",
+      "summary": "Call credit blocked — skew not bearish",
+      "strength": 0.18,
+      "blocked": true,
+      "reason": "net_call_bias_+0.34"
+    }
+  ],
+  "chainSkew": {
+    "netCallBias": 0.34,
+    "callPremiumMid": 1.82e6,
+    "putPremiumMid": 1.21e6,
+    "callVolume": 84210,
+    "putVolume": 61102,
+    "note": "Bullish skew → prefer put credit"
+  },
+  "macro": {
+    "riskOff": false,
+    "headlineIntensity": 0.22,
+    "blackout": false,
+    "headlines": [
+      { "source": "mock", "title": "Fed speakers muted into weekend", "score": 0.12 },
+      { "source": "mock", "title": "Equity breadth steady; no tier-1 prints", "score": 0.08 }
+    ]
+  },
+  "backtest": {
+    "windowDays": 60,
+    "trades": 48,
+    "winRate": 0.67,
+    "rollingSharpe": 1.72,
+    "maxDrawdown": 0.084,
+    "avgCredit": 0.19,
+    "note": "Static snapshot — wire to engine ledger when available"
+  },
+  "stations": [
+    { "id": "signals", "title": "Signals", "subtitle": "Proposed spreads · read-only" },
+    { "id": "risk", "title": "Risk", "subtitle": "Kill · flatten · limits" },
+    { "id": "backtest", "title": "Backtest", "subtitle": "Rolling Sharpe ledger" },
+    { "id": "macro", "title": "Macro", "subtitle": "News + blackout gate" },
+    { "id": "chain", "title": "Chain skew", "subtitle": "Net call bias surface" }
+  ],
+  "source": "mock"
+}
