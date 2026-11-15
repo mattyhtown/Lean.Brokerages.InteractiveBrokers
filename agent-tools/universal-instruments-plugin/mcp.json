@@ -14,7 +14,9 @@
       "env": {
         "IB_HOST": "${env:IB_HOST}",
         "IB_PORT": "${env:IB_PORT}",
-        "IB_CLIENT_ID": "${env:IB_CLIENT_ID}"
+        "IB_CLIENT_ID": "${env:IB_CLIENT_ID}",
+        "IB_ACCOUNT": "${env:IB_ACCOUNT}",
+        "IB_ALLOW_ORDERS": "${env:IB_ALLOW_ORDERS}"
       }
     }
   }
