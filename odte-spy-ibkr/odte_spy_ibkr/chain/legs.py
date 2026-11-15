@@ -18,6 +18,7 @@ class OptionCandidate:
     ask: float | None = None
     volume: float | None = None
     open_interest: float | None = None
+    con_id: int | None = None
 
     @property
     def mid(self) -> float | None:

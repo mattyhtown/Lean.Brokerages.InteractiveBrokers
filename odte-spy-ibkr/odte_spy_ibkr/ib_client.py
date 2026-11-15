@@ -120,6 +120,7 @@ class IBSession:
                     open_interest=float(ticker.openInterest)
                     if getattr(ticker, "openInterest", None)
                     else None,
+                    con_id=int(contract.conId) if contract.conId else None,
                 )
             )
         return filter_expiry(out, expiry)
@@ -128,5 +129,42 @@ class IBSession:
         if not self.settings.orders_allowed:
             logger.warning("Orders disabled (ENABLE_ORDERS / safety flags)")
             return None
-        logger.info("Would place combo order: %s", payload)
-        return "dry-run"
+        from ib_insync import ComboLeg, Contract, Order
+
+        short_id = int(payload.get("short_con_id") or (payload.get("con_ids") or {}).get("short") or 0)
+        long_id = int(payload.get("long_con_id") or (payload.get("con_ids") or {}).get("long") or 0)
+        qty = int(payload.get("contracts") or 1)
+        lmt = payload.get("lmt_price")
+        if not short_id or not long_id:
+            logger.error(
+                "Combo order requires short_con_id and long_con_id (qualify chain legs first); got %s",
+                payload,
+            )
+            return None
+
+        short_contract = Contract(conId=short_id)
+        long_contract = Contract(conId=long_id)
+        self._ib.qualifyContracts(short_contract, long_contract)
+
+        bag = Contract(
+            symbol=self.underlying,
+            secType="BAG",
+            currency="USD",
+            exchange="SMART",
+            comboLegs=[
+                ComboLeg(conId=short_id, ratio=1, action="SELL", exchange="SMART"),
+                ComboLeg(conId=long_id, ratio=1, action="BUY", exchange="SMART"),
+            ],
+        )
+        order = Order(
+            action="BUY",
+            totalQuantity=qty,
+            orderType="LMT",
+            lmtPrice=float(lmt) if lmt is not None else 0.05,
+            transmit=True,
+        )
+        trade = self._ib.placeOrder(bag, order)
+        self._ib.sleep(0.2)
+        oid = getattr(trade.order, "orderId", None)
+        logger.info("Submitted IB combo order id=%s", oid)
+        return str(oid) if oid is not None else "submitted"

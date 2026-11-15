@@ -43,8 +43,24 @@ def load_chain_for_day(
 
     fetched = _fetch_alpaca_chain(settings, ticker=ticker, day=day)
     path.parent.mkdir(parents=True, exist_ok=True)
-    json_fallback.write_text(json.dumps(fetched), encoding="utf-8")
+    _persist_chain_rows(settings, path, json_fallback, fetched)
     return _rows_to_candidates(fetched, day)
+
+
+def _persist_chain_rows(
+    settings: Settings,
+    parquet_path: Path,
+    json_path: Path,
+    rows: list[dict[str, Any]],
+) -> None:
+    try:
+        import pandas as pd
+
+        pd.DataFrame(rows).to_parquet(parquet_path, index=False)
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    json_path.write_text(json.dumps(rows), encoding="utf-8")
 
 
 def _rows_to_candidates(rows: list[dict[str, Any]], day: date) -> list[OptionCandidate]:
@@ -115,20 +131,39 @@ def _synthetic_chain(day: date, spot: float) -> list[OptionCandidate]:
 
 
 def _synthetic_chain_rows(day: date, spot: float) -> list[dict[str, Any]]:
+    """$1-spaced strikes so SPREAD_WIDTH=1 vertical spreads can form."""
     rows: list[dict[str, Any]] = []
-    for offset in (-5, -3, -1, 1, 3, 5):
-        strike = round(spot + offset, 0)
+    center = int(round(spot))
+    for strike in range(center - 15, center + 16):
         for right in ("P", "C"):
+            if right == "P":
+                otm = max(0.0, spot - strike)
+                bid = max(0.05, 0.75 - otm * 0.05)
+                delta = min(0.35, 0.08 + otm * 0.012)
+            else:
+                otm = max(0.0, strike - spot)
+                bid = max(0.05, 0.75 - otm * 0.05)
+                delta = min(0.35, 0.08 + otm * 0.012)
             rows.append(
                 {
-                    "symbol": f"SPY{day.strftime('%y%m%d')}{right}{int(strike)}",
-                    "strike": strike,
+                    "symbol": f"SPY{day.strftime('%y%m%d')}{right}{strike}",
+                    "strike": float(strike),
                     "right": right,
-                    "bid": 0.4,
-                    "ask": 0.45,
-                    "delta": 0.15 if right == "P" else 0.12,
-                    "volume": 100 + abs(offset) * 20,
-                    "open_interest": 500 + abs(offset) * 50,
+                    "bid": bid,
+                    "ask": bid + 0.04,
+                    "delta": delta,
+                    "volume": 100 + int(otm) * 15,
+                    "open_interest": 400 + int(otm) * 40,
                 }
             )
+    puts = {r["strike"]: r for r in rows if r["right"] == "P"}
+    for strike, short in puts.items():
+        long_row = puts.get(strike - 1)
+        if long_row is not None:
+            long_row["ask"] = max(0.05, float(short["bid"]) - 0.18)
+    calls = {r["strike"]: r for r in rows if r["right"] == "C"}
+    for strike, short in calls.items():
+        long_row = calls.get(strike + 1)
+        if long_row is not None:
+            long_row["ask"] = max(0.05, float(short["bid"]) - 0.18)
     return rows

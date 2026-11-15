@@ -47,7 +47,7 @@ def propose_entry(
     macro = evaluate_macro_gate(settings, ctx)
     if macro.blocked:
         return None
-    flow = evaluate_flow_gate(settings, ctx)
+    flow = evaluate_flow_gate(settings, ctx, now=ctx.as_of)
     if flow.decision == GateDecision.BLOCK:
         return None
 

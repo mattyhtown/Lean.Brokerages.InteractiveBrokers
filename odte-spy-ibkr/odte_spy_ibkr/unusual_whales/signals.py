@@ -101,6 +101,19 @@ def signals_from_payload(payload: Any) -> list[FlowSignal]:
     return out
 
 
+def aggregate_flow_bias(bundle: dict[str, Any]) -> float:
+    """Signed bias in [-1, 1] from a UW context bundle (for backtest cache JSON)."""
+    signals: list[FlowSignal] = []
+    for key in ("flow_recent", "flow_alerts", "unusual"):
+        signals.extend(signals_from_payload(bundle.get(key)))
+    agg = aggregate_flow_signals(signals)
+    if agg.bias == FlowBias.BULLISH:
+        return agg.strength
+    if agg.bias == FlowBias.BEARISH:
+        return -agg.strength
+    return 0.0
+
+
 def aggregate_flow_signals(signals: Iterable[FlowSignal]) -> FlowSignal:
     signals = list(signals)
     if not signals:

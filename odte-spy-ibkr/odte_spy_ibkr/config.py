@@ -143,6 +143,9 @@ class Settings(BaseSettings):
     backtest_cache_dir: str = Field(default="data/cache", alias="BACKTEST_CACHE_DIR")
     uw_backtest_cache_dir: str = Field(default="data/cache/uw", alias="UW_BACKTEST_CACHE_DIR")
     uw_backtest_mode: UWBacktestMode = Field(default=UWBacktestMode.NEUTRAL, alias="UW_BACKTEST_MODE")
+    uw_session_jsonl_dir: str = Field(default="data/cache/uw/sessions", alias="UW_SESSION_JSONL_DIR")
+    backtest_walk_forward_train_days: int = Field(default=60, alias="BACKTEST_WALK_FORWARD_TRAIN_DAYS")
+    backtest_walk_forward_test_days: int = Field(default=20, alias="BACKTEST_WALK_FORWARD_TEST_DAYS")
     providers_backtest_enabled: str = Field(
         default="alpaca,unusual_whales,macro_news",
         alias="PROVIDERS_BACKTEST_ENABLED",

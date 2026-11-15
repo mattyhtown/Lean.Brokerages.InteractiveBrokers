@@ -26,8 +26,12 @@ def simulate_day(
     spot: float,
     open_position: OpenPosition | None,
 ) -> tuple[float, OpenPosition | None, bool]:
-    skew = build_chain_skew(candidates, expiry=today_expiry(day), spot=spot, as_of=datetime.combine(day, datetime.min.time()))
-    ctx = build_backtest_context(settings, day=day, spot=spot, chain_skew=skew)
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    signal_at = datetime.combine(day, datetime.min.time(), tzinfo=et).replace(hour=11, minute=0)
+    skew = build_chain_skew(candidates, expiry=today_expiry(day), spot=spot, as_of=signal_at)
+    ctx = build_backtest_context(settings, day=day, spot=spot, chain_skew=skew, now=signal_at)
     if ctx is None:
         return 0.0, open_position, False
 

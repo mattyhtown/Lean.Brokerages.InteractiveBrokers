@@ -23,3 +23,8 @@ class DailyLedger:
             out.append(pnl / equity if equity else 0.0)
             equity += pnl
         return out
+
+    def total_pnl(self, days: list[date] | None = None) -> float:
+        if days is None:
+            return float(sum(self.rows.values()))
+        return float(sum(self.rows.get(d, 0.0) for d in days))

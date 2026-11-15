@@ -17,9 +17,33 @@ class UwBacktestReplay:
 
     def load_day(self, day: date) -> dict | None:
         path = self._dir / f"{day.isoformat()}.json"
-        if not path.is_file():
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+        jsonl = Path(self._settings.uw_session_jsonl_dir) / f"{day.isoformat()}.jsonl"
+        if jsonl.is_file():
+            return self._aggregate_jsonl(jsonl, day)
+        return None
+
+    def _aggregate_jsonl(self, path: Path, day: date) -> dict | None:
+        biases: list[float] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            bundle = row.get("bundle") or row
+            if "aggregate_bias" in bundle:
+                biases.append(float(bundle["aggregate_bias"]))
+                continue
+            from odte_spy_ibkr.unusual_whales.signals import aggregate_flow_bias
+
+            biases.append(aggregate_flow_bias(bundle))
+        if not biases:
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        return {"date": day.isoformat(), "aggregate_bias": sum(biases) / len(biases), "source": "jsonl"}
 
     def flow_signal(
         self,

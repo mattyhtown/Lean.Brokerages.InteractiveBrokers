@@ -24,7 +24,7 @@ This software is for education and paper testing only. Options trading involves 
 |----------|---------|---------|
 | `LIVE_TRADING` | `false` | Must be `true` for live account semantics |
 | `READ_ONLY` | `true` | IB API read-only session |
-| `ENABLE_ORDERS` | `false` | Must be `true` to submit orders (combo placement is still logged/dry-run in v1) |
+| `ENABLE_ORDERS` | `false` | Must be `true` **and** `READ_ONLY=false` with paper or live to submit IB combo orders via `place_combo_order` |
 
 ## Provider matrix
 
@@ -100,14 +100,27 @@ Live: IB chain → JSON cache under `data/cache/SPY/{date}.json`. Backtest reads
 ```bash
 pip install -e ".[dev,backtest]"
 python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --report-json reports/summary.json
-python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --require-rolling-sharpe 1.5
+python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --walk-forward --require-rolling-sharpe 1.5
+python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --verbose  # no-entry reason histogram
 ```
 
 - Rolling Sharpe: 60d window, annualized `sqrt(252)*mean/std` on daily P&amp;L returns
 - Optional live `SHARPE_GATE_ENABLED` pauses new entries when rolling Sharpe &lt; `SHARPE_MIN` (default 1.5)
 - Macro news provider: Alpaca news cache + `config/macro_events.yaml` tier-1 blackout
 
-**Gaps:** UW history is cache-first (`UW_BACKTEST_CACHE_DIR`); synthetic chain used when Alpaca keys/history missing.
+- Walk-forward: `--walk-forward` scores only the holdout test window (`BACKTEST_WALK_FORWARD_TRAIN_DAYS` / `TEST_DAYS`); improvement evaluator uses the same holdout.
+- Cache: chain bars prefer **parquet** when pandas/pyarrow installed (`data/cache/SPY/{date}.parquet`).
+- Live journal: `data/journal/daily_pnl.jsonl` appended at session roll / shutdown for `SHARPE_GATE_ENABLED`.
+
+**UW session collector** (live, requires API key):
+
+```bash
+python -m odte_spy_ibkr.unusual_whales --once
+```
+
+Appends `data/cache/uw/sessions/{date}.jsonl` and refreshes `data/cache/uw/{date}.json` for backtest replay.
+
+**Gaps:** Without Alpaca/UW keys, backtest uses **synthetic** chains (not historical marks); UW history is cache-first.
 
 ## Continuous improvement
 

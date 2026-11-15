@@ -34,21 +34,29 @@ def evaluate_candidate(candidate: ExperimentCandidate, *, end: date | None = Non
     from odte_spy_ibkr.backtest.simulator import simulate_day
     from odte_spy_ibkr.strategy.interface import OpenPosition
 
-    days = iter_trading_days(start, end)
+    from odte_spy_ibkr.backtest.walk_forward import holdout_test_days
+
+    all_days = iter_trading_days(start, end)
+    score_days = holdout_test_days(
+        all_days,
+        train_days=settings.backtest_walk_forward_train_days,
+        test_days=settings.backtest_walk_forward_test_days,
+    )
     ledger = DailyLedger(equity_base=settings.backtest_equity_base)
     open_pos: OpenPosition | None = None
     wins: list[bool] = []
-    for day in days:
+    for day in all_days:
         from odte_spy_ibkr.backtest.spot_loader import load_spot_for_day
 
         spot = load_spot_for_day(settings, ticker=settings.underlying, day=day)
         chain = load_chain_for_day(settings, ticker=settings.underlying, day=day, spot=spot)
         pnl, open_pos, traded = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
-        ledger.record(day, pnl)
-        if traded:
-            wins.append(pnl > 0)
-    returns = ledger.daily_return_series(days)
-    pnls = ledger.daily_pnl_series(days)
+        if day in score_days:
+            ledger.record(day, pnl)
+            if traded:
+                wins.append(pnl > 0)
+    returns = ledger.daily_return_series(score_days)
+    pnls = ledger.daily_pnl_series(score_days)
     summary = summarize_backtest(
         returns,
         pnls,

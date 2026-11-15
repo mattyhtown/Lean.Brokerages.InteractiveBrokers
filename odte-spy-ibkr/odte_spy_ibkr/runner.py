@@ -5,9 +5,12 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from datetime import date
+
 from odte_spy_ibkr.chain import build_chain_skew, today_expiry
 from odte_spy_ibkr.chain.cache_io import save_chain_json
 from odte_spy_ibkr.config import Settings, load_settings
+from odte_spy_ibkr.journal import DailyPnlRow, append_daily_pnl
 from odte_spy_ibkr.ib_client import IBSession
 from odte_spy_ibkr.logging_utils import setup_logging
 from odte_spy_ibkr.providers.aggregate import MarketContextAggregator
@@ -15,7 +18,11 @@ from odte_spy_ibkr.providers.chain_skew import ChainSkewProvider
 from odte_spy_ibkr.providers.registry import build_providers
 from odte_spy_ibkr.risk import RiskDecision, RiskLimits, RiskState, check_new_entry, is_rth, should_flatten
 from odte_spy_ibkr.risk.sharpe_gate import allow_new_entries
-from odte_spy_ibkr.strategy.interface import propose_entry
+from odte_spy_ibkr.strategy.interface import OpenPosition, manage_open, propose_entry
+from odte_spy_ibkr.unusual_whales.collector import collect_once
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +58,24 @@ def run_loop(settings: Settings, *, once: bool = False) -> None:
     )
     state = RiskState()
     last_uw_poll = 0.0
+    session_day: date | None = None
+    session_pnl = 0.0
+    live_position: OpenPosition | None = None
+
+    def flush_session_pnl() -> None:
+        nonlocal session_pnl, session_day
+        if session_day is None:
+            return
+        source = "live" if settings.live_trading else "paper"
+        append_daily_pnl(settings.journal_path, DailyPnlRow(day=session_day, pnl=session_pnl, source=source))
+        session_pnl = 0.0
 
     try:
         while True:
+            today = datetime.now(tz=timezone.utc).astimezone(ET).date()
+            if session_day is not None and today != session_day:
+                flush_session_pnl()
+            session_day = today
             if not is_rth():
                 logger.info("Outside RTH; sleeping")
                 if once:
@@ -79,10 +101,28 @@ def run_loop(settings: Settings, *, once: bool = False) -> None:
             now = time.monotonic()
             if now - last_uw_poll >= settings.uw_poll_interval_sec:
                 last_uw_poll = now
-                logger.debug("UW poll tick at %s", datetime.now(tz=timezone.utc).isoformat())
+                if settings.unusual_whales_api_key:
+                    try:
+                        collect_once(settings)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("UW collector failed: %s", exc)
+                else:
+                    logger.debug("UW poll skipped (no API key)")
 
             decision, reason = check_new_entry(limits, state)
-            if should_flatten(limits):
+            if live_position is not None:
+                action = manage_open(settings, live_position, ctx)
+                if action in {"flatten", "stop"} or should_flatten(limits):
+                    exit_pnl = (
+                        -live_position.entry_credit * live_position.contracts * 100 * 0.7
+                        if action == "stop"
+                        else live_position.entry_credit * live_position.contracts * 100 * 0.3
+                    )
+                    session_pnl += exit_pnl
+                    state = RiskState(realized_pnl=state.realized_pnl + exit_pnl, open_contracts=0)
+                    live_position = None
+                    logger.info("Position closed action=%s exit_pnl=%.2f", action, exit_pnl)
+            elif should_flatten(limits):
                 logger.info("Flatten window reached")
             elif decision == RiskDecision.ALLOW:
                 candidates = []
@@ -103,13 +143,30 @@ def run_loop(settings: Settings, *, once: bool = False) -> None:
                         intent.net_call_risk,
                         intent.reason,
                     )
-                    if settings.orders_allowed and ib is not None:
+                    credit = intent.spread.estimated_credit or settings.min_credit
+                    live_position = OpenPosition(
+                        spread=intent.spread,
+                        side=intent.side,
+                        contracts=intent.contracts,
+                        entry_credit=credit,
+                        opened_at=datetime.now(tz=timezone.utc),
+                    )
+                    entry_pnl = credit * intent.contracts * 100
+                    session_pnl += entry_pnl
+                    state = RiskState(
+                        realized_pnl=state.realized_pnl + entry_pnl,
+                        open_contracts=intent.contracts,
+                    )
+                    short_cid = getattr(intent.spread.short_leg, "con_id", None)
+                    long_cid = getattr(intent.spread.long_leg, "con_id", None)
+                    if settings.orders_allowed and ib is not None and short_cid and long_cid:
                         ib.place_combo_order(
                             {
                                 "side": intent.side.value,
-                                "short": intent.spread.short_leg.symbol,
-                                "long": intent.spread.long_leg.symbol,
+                                "short_con_id": short_cid,
+                                "long_con_id": long_cid,
                                 "contracts": intent.contracts,
+                                "lmt_price": credit,
                             }
                         )
                 else:
@@ -121,6 +178,7 @@ def run_loop(settings: Settings, *, once: bool = False) -> None:
                 break
             time.sleep(settings.poll_interval_sec)
     finally:
+        flush_session_pnl()
         if ib is not None:
             ib.disconnect()
 
