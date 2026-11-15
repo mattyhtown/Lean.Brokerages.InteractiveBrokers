@@ -37,12 +37,6 @@ class OptionsDay:
     source_updated_at: datetime | None
 
 
-@dataclass(frozen=True)
-class OptionsDownload:
-    days: list[OptionsDay]
-    warnings: list[str]
-
-
 def _decimal(value: object) -> float | None:
     if value is None:
         return None
@@ -88,33 +82,31 @@ def parse_cores(body: bytes) -> list[OptionsDay]:
     return days
 
 
-def download_options(
+def download_day(
     token: str,
     symbols: list[str],
-    start: date,
+    trade_date: date,
     http: HttpCallable = send,
-) -> OptionsDownload:
-    """Download ORATS end-of-day core metrics for `symbols` on every trade date from `start` on.
+) -> list[OptionsDay]:
+    """Download ORATS end-of-day core metrics for `symbols` on one trade date.
 
-    ORATS returns a ticker's whole history in one response, so each group of ten tickers costs
-    one request however far back `start` is.
+    Asking for one date keeps every response to a row per symbol; without a date ORATS sends each
+    ticker's whole history back to 2007.
     """
     days: list[OptionsDay] = []
     for offset in range(0, len(symbols), _MAX_TICKERS_PER_REQUEST):
         query = {
             "token": token,
             "ticker": ",".join(symbols[offset : offset + _MAX_TICKERS_PER_REQUEST]),
+            "tradeDate": trade_date.isoformat(),
             "fields": ",".join(_REQUESTED_FIELDS),
         }
         try:
             response = http("GET", f"{ORATS_URL}/hist/cores?{urllib.parse.urlencode(query)}", {}, None, _TIMEOUT_SECONDS)
         except HttpStatusError as exc:
             if exc.status == 404:
-                # ORATS answers 404 when it has nothing for any ticker in the request.
+                # Nothing for these tickers on this date: a holiday, or a day ORATS has not published yet.
                 continue
             raise
-        days.extend(day for day in parse_cores(response.body) if day.trade_date >= start)
-    found = {day.symbol for day in days}
-    missing = [symbol for symbol in symbols if symbol not in found]
-    warnings = [f"ORATS returned no options data since {start} for: {', '.join(missing)}"] if missing else []
-    return OptionsDownload(days, warnings)
+        days.extend(parse_cores(response.body))
+    return days

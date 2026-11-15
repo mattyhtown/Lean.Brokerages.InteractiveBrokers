@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
 
 from research_data.http import LoaderError
 from research_data.news import NewsDigest
 from research_data.newsletters import Newsletter, passage_chunks, ticker_passages
-from research_data.options import OptionsDownload
+from research_data.options import OptionsDay
 from research_data.prices import DATASET, PriceDownload
 from research_data.supabase import SupabaseClient, in_filter
 from research_data.tickers import Watchlist
@@ -28,7 +28,7 @@ class Sentiment:
 
 SentimentScorer = Callable[[str], Sentiment]
 PriceDownloader = Callable[[list[str], date], PriceDownload]
-OptionsDownloader = Callable[[list[str], date], OptionsDownload]
+OptionsDownloader = Callable[[list[str], date], list[OptionsDay]]
 NewsFetcher = Callable[[str, list[str]], NewsDigest]
 
 
@@ -173,27 +173,45 @@ def _source_symbols(supabase: SupabaseClient, watchlist: Watchlist) -> list[str]
 
 def load_options(
     supabase: SupabaseClient,
-    download: OptionsDownloader,
+    download_day: OptionsDownloader,
     watchlist: Watchlist,
     start: date,
+    end: date,
 ) -> tuple[int, int, list[str]]:
-    """Store daily options metrics for every watchlist symbol and every ticker mentioned in a stored passage."""
+    """Store daily options metrics for every watchlist symbol and every ticker mentioned in a stored passage.
+
+    Covers each weekday from `start` through `end`, saving one date at a time so a long backfill
+    that stops partway keeps what it has loaded.
+    """
     symbols = _source_symbols(supabase, watchlist)
-    result = download(symbols, start)
-    supabase.upsert(
-        "options_daily",
-        [
-            {
-                "symbol": day.symbol,
-                "trade_date": day.trade_date.isoformat(),
-                **day.metrics,
-                "source_updated_at": day.source_updated_at.isoformat() if day.source_updated_at else None,
-            }
-            for day in result.days
-        ],
-        on_conflict="symbol,trade_date",
-    )
-    return len(symbols), len(result.days), result.warnings
+    stored = 0
+    found: set[str] = set()
+    trade_date = start
+    while trade_date <= end:
+        if trade_date.weekday() < 5:
+            days = download_day(symbols, trade_date)
+            supabase.upsert(
+                "options_daily",
+                [
+                    {
+                        "symbol": day.symbol,
+                        "trade_date": day.trade_date.isoformat(),
+                        **day.metrics,
+                        "source_updated_at": day.source_updated_at.isoformat() if day.source_updated_at else None,
+                    }
+                    for day in days
+                ],
+                on_conflict="symbol,trade_date",
+            )
+            stored += len(days)
+            found.update(day.symbol for day in days)
+        trade_date += timedelta(days=1)
+    missing = [symbol for symbol in symbols if symbol not in found]
+    warnings = []
+    if missing:
+        who = ", ".join(missing) if found else "any symbol"
+        warnings.append(f"ORATS returned no options data from {start} through {end} for {who}")
+    return len(symbols), stored, warnings
 
 
 def load_news(

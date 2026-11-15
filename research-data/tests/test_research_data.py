@@ -22,7 +22,7 @@ from research_data.newsletters import (
     parse_message,
     ticker_passages,
 )
-from research_data.options import OptionsDay, OptionsDownload, download_options, parse_cores
+from research_data.options import OptionsDay, download_day, parse_cores
 from research_data.pipeline import (
     Sentiment,
     load_news,
@@ -596,19 +596,16 @@ def test_cores_in_an_unexpected_shape_are_an_error(body: bytes) -> None:
         parse_cores(body)
 
 
-def test_options_are_requested_ten_tickers_at_a_time_and_kept_from_the_start_date() -> None:
+def test_options_are_requested_for_one_date_ten_tickers_at_a_time() -> None:
     symbols = ["AAPL", *(f"T{letter}" for letter in "ABCDEFGHIJK")]
     not_found = HttpStatusError(404, "HTTP 404 from api.orats.io/datav2/hist/cores: Not Found")
-    http = FakeHttp([HttpResponse(200, CORES), not_found])
-    result = download_options("orats-token", symbols, date(2019, 11, 28), http)
-    assert result.days == [CORE_DAY]
-    assert result.warnings == [
-        "ORATS returned no options data since 2019-11-28 for: TA, TB, TC, TD, TE, TF, TG, TH, TI, TJ, TK"
-    ]
+    http = FakeHttp([HttpResponse(200, json.dumps({"data": json.loads(CORES)["data"][1:]}).encode("utf-8")), not_found])
+    assert download_day("orats-token", symbols, date(2019, 11, 29), http) == [CORE_DAY]
     queries = [urllib.parse.parse_qs(urllib.parse.urlparse(url).query) for _, url, _, _ in http.calls]
     assert [method for method, _, _, _ in http.calls] == ["GET", "GET"]
     assert http.calls[0][1].startswith("https://api.orats.io/datav2/hist/cores?")
     assert [query["ticker"] for query in queries] == [["AAPL,TA,TB,TC,TD,TE,TF,TG,TH,TI"], ["TJ,TK"]]
+    assert [query["tradeDate"] for query in queries] == [["2019-11-29"], ["2019-11-29"]]
     assert queries[0]["token"] == ["orats-token"]
     assert queries[0]["fields"] == ["ticker,tradeDate,updatedAt,iv30d,ivPctile1y,orHv20d,slope,contango,cVolu,pVolu,cOi,pOi"]
 
@@ -616,35 +613,37 @@ def test_options_are_requested_ten_tickers_at_a_time_and_kept_from_the_start_dat
 def test_an_orats_error_other_than_not_found_stops_the_download() -> None:
     http = FakeHttp([HttpStatusError(403, "HTTP 403 from api.orats.io/datav2/hist/cores: denied")])
     with pytest.raises(LoaderError, match="HTTP 403"):
-        download_options("bad-token", ["AAPL"], date(2019, 11, 28), http)
+        download_day("bad-token", ["AAPL"], date(2019, 11, 29), http)
 
 
-def test_options_cover_watchlist_and_mentioned_symbols() -> None:
+def test_options_cover_each_weekday_for_watchlist_and_mentioned_symbols() -> None:
     supabase = FakeSupabase({"mentioned_tickers": [[{"symbol": "TSLA"}]]})
     requested: list[tuple[list[str], date]] = []
 
-    def download(symbols: list[str], start: date) -> OptionsDownload:
-        requested.append((symbols, start))
-        return OptionsDownload([CORE_DAY], ["ORATS returned no options data"])
+    def download(symbols: list[str], trade_date: date) -> list[OptionsDay]:
+        requested.append((symbols, trade_date))
+        return [CORE_DAY] if trade_date == CORE_DAY.trade_date else []
 
-    result = load_options(supabase, download, WATCHLIST, date(2019, 11, 1))
-    assert requested == [(["AAPL", "GOOGL", "NVDA", "TSLA"], date(2019, 11, 1))]
-    assert result == (4, 1, ["ORATS returned no options data"])
+    # Thursday 28 November 2019 through Monday 2 December.
+    result = load_options(supabase, download, WATCHLIST, date(2019, 11, 28), date(2019, 12, 2))
+    symbols = ["AAPL", "GOOGL", "NVDA", "TSLA"]
+    assert requested == [(symbols, date(2019, 11, 28)), (symbols, date(2019, 11, 29)), (symbols, date(2019, 12, 2))]
+    assert result == (
+        4,
+        1,
+        ["ORATS returned no options data from 2019-11-28 through 2019-12-02 for GOOGL, NVDA, TSLA"],
+    )
+    row = {"symbol": "AAPL", "trade_date": "2019-11-29", **CORE_DAY.metrics, "source_updated_at": "2019-11-29T17:46:01+00:00"}
     assert supabase.upserts == [
-        (
-            "options_daily",
-            [
-                {
-                    "symbol": "AAPL",
-                    "trade_date": "2019-11-29",
-                    **CORE_DAY.metrics,
-                    "source_updated_at": "2019-11-29T17:46:01+00:00",
-                }
-            ],
-            "symbol,trade_date",
-            False,
-        )
+        ("options_daily", [], "symbol,trade_date", False),
+        ("options_daily", [row], "symbol,trade_date", False),
+        ("options_daily", [], "symbol,trade_date", False),
     ]
+
+
+def test_options_report_a_window_with_no_data_at_all_in_one_line() -> None:
+    result = load_options(FakeSupabase(), lambda symbols, trade_date: [], WATCHLIST, date(2019, 11, 30), date(2019, 12, 2))
+    assert result == (3, 0, ["ORATS returned no options data from 2019-11-30 through 2019-12-02 for any symbol"])
 
 
 def test_a_digest_answer_becomes_plain_sentences() -> None:

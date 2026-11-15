@@ -14,7 +14,7 @@ from research_data.http import LoaderError
 from research_data.local_finbert import LocalFinbert
 from research_data.news import NewsDigest, fetch_digest
 from research_data.newsletters import fetch_newsletters
-from research_data.options import OptionsDownload, download_options
+from research_data.options import OptionsDay, download_day
 from research_data.pipeline import (
     Sentiment,
     load_news,
@@ -98,10 +98,11 @@ def _run_news(args: argparse.Namespace, env: Mapping[str, str], supabase: Supaba
 def _run_options(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
     token = _required(env, "ORATS_API_TOKEN")
 
-    def download(symbols: list[str], start: date) -> OptionsDownload:
-        return download_options(token, symbols, start)
+    def download(symbols: list[str], trade_date: date) -> list[OptionsDay]:
+        return download_day(token, symbols, trade_date)
 
-    symbols, days, warnings = load_options(supabase, download, _read_watchlist(args.watchlist), args.start)
+    today = datetime.now(_MARKET_TIME_ZONE).date()
+    symbols, days, warnings = load_options(supabase, download, _read_watchlist(args.watchlist), args.start, today)
     print(f"options: stored {days} daily rows for {symbols} symbols since {args.start}")
     for warning in warnings:
         print(f"options: warning: {warning}", file=sys.stderr)
