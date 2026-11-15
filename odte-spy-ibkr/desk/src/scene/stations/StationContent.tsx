@@ -1,7 +1,20 @@
 import type { DeskState, GateState } from '../../data/types'
 import { statusColor } from '../materials'
 
-function GateChip({ gate }: { gate: GateState }) {
+function GateChip({ gate }: { gate: GateState | undefined }) {
+  if (!gate) {
+    return (
+      <div className="gate-chip" style={{ borderColor: statusColor('watch') }}>
+        <span className="gate-dot" style={{ background: statusColor('watch') }} />
+        <div>
+          <strong>Gate unavailable</strong>
+          <em>missing from payload</em>
+          <p>Retained prior mock / incomplete engine data</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="gate-chip" style={{ borderColor: statusColor(gate.status) }}>
       <span className="gate-dot" style={{ background: statusColor(gate.status) }} />
@@ -17,13 +30,17 @@ function GateChip({ gate }: { gate: GateState }) {
 }
 
 export function SignalsContent({ state }: { state: DeskState }) {
+  const signals = state.signals ?? []
+  const positions = state.positions ?? []
+  const spot = Number.isFinite(state.spot) ? state.spot : 0
+
   return (
     <div className="station-block">
       <p className="spot">
-        {state.symbol} {state.spot.toFixed(2)} · read-only
+        {state.symbol ?? 'SPY'} {spot.toFixed(2)} · read-only
       </p>
       <ul className="signal-list">
-        {state.signals.map((s) => (
+        {signals.map((s) => (
           <li key={s.id} className={s.blocked ? 'blocked' : 'open'}>
             <span>{s.side.replace('_', ' ')}</span>
             <p>{s.summary}</p>
@@ -33,11 +50,11 @@ export function SignalsContent({ state }: { state: DeskState }) {
           </li>
         ))}
       </ul>
-      {state.positions.length === 0 ? (
+      {positions.length === 0 ? (
         <p className="muted">No open positions</p>
       ) : (
         <ul className="signal-list">
-          {state.positions.map((p) => (
+          {positions.map((p) => (
             <li key={p.id}>
               <span>
                 {p.side} ×{p.contracts}
@@ -54,25 +71,26 @@ export function SignalsContent({ state }: { state: DeskState }) {
 }
 
 export function RiskContent({ state }: { state: DeskState }) {
+  const flatten = state.flatten
   return (
     <div className="station-block">
-      <GateChip gate={state.gates.risk} />
-      <GateChip gate={state.gates.sharpe} />
+      <GateChip gate={state.gates?.risk} />
+      <GateChip gate={state.gates?.sharpe} />
       <div className="kv">
         <span>Flatten</span>
         <strong>
-          {state.flatten.shouldFlatten ? 'NOW' : `${state.flatten.minutesToFlatten}m`}
+          {flatten?.shouldFlatten ? 'NOW' : `${flatten?.minutesToFlatten ?? '—'}m`}
         </strong>
       </div>
       <div className="kv">
         <span>RTH</span>
-        <strong>{state.flatten.rth ? 'open' : 'closed'}</strong>
+        <strong>{flatten?.rth ? 'open' : 'closed'}</strong>
       </div>
       <div className="kv warn">
         <span>Orders</span>
         <strong>OFF</strong>
       </div>
-      <p className="muted">{state.safety.ordersLockedReason}</p>
+      <p className="muted">{state.safety?.ordersLockedReason ?? 'ENABLE_ORDERS locked'}</p>
     </div>
   )
 }
@@ -81,44 +99,54 @@ export function BacktestContent({ state }: { state: DeskState }) {
   const b = state.backtest
   return (
     <div className="station-block">
-      <GateChip gate={state.gates.sharpe} />
+      <GateChip gate={state.gates?.sharpe} />
       <div className="metrics-grid">
         <div>
           <em>Trades</em>
-          <strong>{b.trades}</strong>
+          <strong>{b?.trades ?? '—'}</strong>
         </div>
         <div>
           <em>Win</em>
-          <strong>{(b.winRate * 100).toFixed(0)}%</strong>
+          <strong>
+            {b && Number.isFinite(b.winRate) ? `${(b.winRate * 100).toFixed(0)}%` : '—'}
+          </strong>
         </div>
         <div>
           <em>Sharpe</em>
-          <strong>{b.rollingSharpe.toFixed(2)}</strong>
+          <strong>
+            {b && Number.isFinite(b.rollingSharpe) ? b.rollingSharpe.toFixed(2) : '—'}
+          </strong>
         </div>
         <div>
           <em>Max DD</em>
-          <strong>{(b.maxDrawdown * 100).toFixed(1)}%</strong>
+          <strong>
+            {b && Number.isFinite(b.maxDrawdown)
+              ? `${(b.maxDrawdown * 100).toFixed(1)}%`
+              : '—'}
+          </strong>
         </div>
       </div>
-      <p className="muted">{b.note}</p>
+      <p className="muted">{b?.note ?? 'No backtest snapshot'}</p>
     </div>
   )
 }
 
 export function MacroContent({ state }: { state: DeskState }) {
+  const macro = state.macro
+  const headlines = macro?.headlines ?? []
   return (
     <div className="station-block">
-      <GateChip gate={state.gates.macro} />
+      <GateChip gate={state.gates?.macro} />
       <div className="kv">
         <span>Risk-off</span>
-        <strong>{state.macro.riskOff ? 'YES' : 'no'}</strong>
+        <strong>{macro?.riskOff ? 'YES' : 'no'}</strong>
       </div>
       <div className="kv">
         <span>Blackout</span>
-        <strong>{state.macro.blackout ? 'ACTIVE' : 'clear'}</strong>
+        <strong>{macro?.blackout ? 'ACTIVE' : 'clear'}</strong>
       </div>
       <ul className="headline-list">
-        {state.macro.headlines.map((h, i) => (
+        {headlines.map((h, i) => (
           <li key={i}>
             <small>{h.source}</small> {h.title}
           </li>
@@ -130,27 +158,36 @@ export function MacroContent({ state }: { state: DeskState }) {
 
 export function ChainContent({ state }: { state: DeskState }) {
   const c = state.chainSkew
+  const bias = c && Number.isFinite(c.netCallBias) ? c.netCallBias : 0
   return (
     <div className="station-block">
-      <GateChip gate={state.gates.flow} />
+      <GateChip gate={state.gates?.flow} />
       <div className="skew-meter">
         <div
           className="skew-fill"
           style={{
-            width: `${((c.netCallBias + 1) / 2) * 100}%`,
+            width: `${((bias + 1) / 2) * 100}%`,
           }}
         />
-        <span>net_call_bias {c.netCallBias.toFixed(2)}</span>
+        <span>net_call_bias {bias.toFixed(2)}</span>
       </div>
       <div className="kv">
         <span>Call prem</span>
-        <strong>{(c.callPremiumMid / 1e6).toFixed(2)}M</strong>
+        <strong>
+          {c && Number.isFinite(c.callPremiumMid)
+            ? `${(c.callPremiumMid / 1e6).toFixed(2)}M`
+            : '—'}
+        </strong>
       </div>
       <div className="kv">
         <span>Put prem</span>
-        <strong>{(c.putPremiumMid / 1e6).toFixed(2)}M</strong>
+        <strong>
+          {c && Number.isFinite(c.putPremiumMid)
+            ? `${(c.putPremiumMid / 1e6).toFixed(2)}M`
+            : '—'}
+        </strong>
       </div>
-      <p className="muted">{c.note}</p>
+      <p className="muted">{c?.note ?? 'No skew snapshot'}</p>
     </div>
   )
 }
