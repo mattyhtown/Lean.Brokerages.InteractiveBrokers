@@ -353,6 +353,14 @@ def build_wire_request(
     return spec, url, headers, body, secrets
 
 
+def _mcp_approval_notice(item: dict[str, object]) -> str:
+    return (
+        "[mcp approval required: "
+        f"{item.get('server_label')}.{item.get('name')} "
+        f"arguments={item.get('arguments')}]"
+    )
+
+
 def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object]) -> ChatResponse:
     if spec.protocol == "anthropic_messages":
         blocks = data.get("content")
@@ -365,8 +373,16 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
         return ChatResponse(spec.name, resolved_model, "\n".join(parts).strip(), data)
 
     if spec.protocol == "openai_responses":
+        output_items = data.get("output")
         if isinstance(data.get("output_text"), str) and data["output_text"]:
-            return ChatResponse(spec.name, str(data.get("model") or model), str(data["output_text"]), data)
+            # output_text aggregates message text only, so a pending approval would otherwise be hidden.
+            approvals = [
+                _mcp_approval_notice(item)
+                for item in (output_items if isinstance(output_items, list) else [])
+                if isinstance(item, dict) and item.get("type") == "mcp_approval_request"
+            ]
+            text = "\n".join([str(data["output_text"]), *approvals])
+            return ChatResponse(spec.name, str(data.get("model") or model), text, data)
         status = str(data.get("status", "")).lower()
         if status in ("failed", "cancelled", "incomplete"):
             detail = data.get("incomplete_details") or data.get("error")
@@ -379,7 +395,6 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
                         f"[{status}: {message.strip()}]",
                         data,
                     )
-        output_items = data.get("output")
         parts: list[str] = []
         if isinstance(output_items, list):
             for item in output_items:
@@ -390,11 +405,7 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
                     if isinstance(refusal, str) and refusal.strip():
                         parts.append(f"[refusal: {refusal.strip()}]")
                 if item.get("type") == "mcp_approval_request":
-                    parts.append(
-                        "[mcp approval required: "
-                        f"{item.get('server_label')}.{item.get('name')} "
-                        f"arguments={item.get('arguments')}]"
-                    )
+                    parts.append(_mcp_approval_notice(item))
                 content = item.get("content")
                 if isinstance(content, list):
                     for chunk in content:

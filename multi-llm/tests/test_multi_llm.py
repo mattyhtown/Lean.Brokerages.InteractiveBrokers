@@ -418,6 +418,33 @@ def test_openai_mcp_approval_request_is_surfaced() -> None:
     assert "mcp approval required: unusualwhales.get_flow" in resp.text
 
 
+def test_openai_mcp_approval_request_is_surfaced_alongside_output_text() -> None:
+    def fake_transport(_u: str, _h: dict[str, str], _b: dict[str, object], _t: int) -> dict[str, object]:
+        return {
+            "model": "gpt-4.1",
+            "output_text": "Let me pull the flow.",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "Let me pull the flow."}]},
+                {
+                    "type": "mcp_approval_request",
+                    "server_label": "unusualwhales",
+                    "name": "get_flow",
+                    "arguments": '{"ticker":"SPY"}',
+                },
+            ],
+        }
+
+    resp = complete(
+        ChatRequest(provider="openai", prompt="Flow?", attach_mcp=("uw",)),
+        env={"OPENAI_API_KEY": "sk-test", "UW_API_KEY": "uw-test"},
+        transport=fake_transport,
+    )
+    assert resp.text == (
+        "Let me pull the flow.\n"
+        '[mcp approval required: unusualwhales.get_flow arguments={"ticker":"SPY"}]'
+    )
+
+
 def test_fanout_shuts_down_its_thread_pool() -> None:
     before = {t.ident for t in threading.enumerate()}
 
