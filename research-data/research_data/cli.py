@@ -1,24 +1,35 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
 import sys
 from typing import Mapping
+from zoneinfo import ZoneInfo
 
 from multi_llm.client import ChatRequest, LLMError, complete
 
 from research_data.http import LoaderError
 from research_data.local_finbert import LocalFinbert
+from research_data.news import NewsDigest, fetch_digest
 from research_data.newsletters import fetch_newsletters
-from research_data.pipeline import Sentiment, load_newsletters, load_prices, score_passages
+from research_data.options import OptionsDownload, download_options
+from research_data.pipeline import (
+    Sentiment,
+    load_news,
+    load_newsletters,
+    load_options,
+    load_prices,
+    score_passages,
+)
 from research_data.prices import PriceDownload, download_daily_bars
 from research_data.supabase import SupabaseClient
 from research_data.tickers import Watchlist
 
 DEFAULT_WATCHLIST = Path(__file__).resolve().parent.parent / "watchlist.txt"
 _DEFAULT_LOOKBACK_DAYS = 7
+_MARKET_TIME_ZONE = ZoneInfo("America/New_York")
 
 
 def _required(env: Mapping[str, str], name: str) -> str:
@@ -73,20 +84,55 @@ def _run_prices(args: argparse.Namespace, env: Mapping[str, str], supabase: Supa
         print(f"prices: warning: {warning}", file=sys.stderr)
 
 
-_STEPS = {"newsletters": _run_newsletters, "score": _run_score, "prices": _run_prices}
+def _run_news(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
+    api_key = _required(env, "PERPLEXITY_API_KEY")
+
+    def fetch(symbol: str, names: list[str]) -> NewsDigest:
+        return fetch_digest(api_key, symbol, names)
+
+    day = datetime.now(_MARKET_TIME_ZONE).date()
+    fetched, skipped, items = load_news(supabase, fetch, _read_watchlist(args.watchlist), day)
+    print(f"news: fetched {fetched} digests for {day} with {items} news items, {skipped} symbols already had one")
+
+
+def _run_options(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
+    token = _required(env, "ORATS_API_TOKEN")
+
+    def download(symbols: list[str], start: date) -> OptionsDownload:
+        return download_options(token, symbols, start)
+
+    symbols, days, warnings = load_options(supabase, download, _read_watchlist(args.watchlist), args.start)
+    print(f"options: stored {days} daily rows for {symbols} symbols since {args.start}")
+    for warning in warnings:
+        print(f"options: warning: {warning}", file=sys.stderr)
+
+
+# In the order `all` runs them: text sources before scoring, and the sources that
+# follow mentioned tickers after the text that mentions them.
+_STEPS = {
+    "newsletters": _run_newsletters,
+    "news": _run_news,
+    "score": _run_score,
+    "prices": _run_prices,
+    "options": _run_options,
+}
+# `all` leaves these out when their key is not set, so the original three steps keep running without them.
+_OPTIONAL_STEP_KEYS = {"news": "PERPLEXITY_API_KEY", "options": "ORATS_API_TOKEN"}
 
 
 def build_parser() -> argparse.ArgumentParser:
     lookback = date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
     parser = argparse.ArgumentParser(
         prog="research-data",
-        description="Load newsletters, FinBERT sentiment and daily prices into Supabase.",
+        description="Load newsletters, news digests, FinBERT sentiment, daily prices and options metrics "
+        "into Supabase.",
     )
     parser.add_argument(
         "step",
         choices=[*_STEPS, "all"],
-        help="newsletters: Gmail label to passages; score: FinBERT on unscored passages; "
-        "prices: Databento daily bars; all: the three in that order",
+        help="newsletters: Gmail label to passages; news: today's Perplexity news digest per watchlist symbol; "
+        "score: FinBERT on unscored passages; prices: Databento daily bars; options: ORATS daily options "
+        "metrics; all: every step in that order, leaving out news and options when their key is not set",
     )
     parser.add_argument("--label", default="Substack", help="Gmail label to read (default: Substack)")
     parser.add_argument(
@@ -99,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--start",
         type=date.fromisoformat,
         default=lookback,
-        help=f"Load prices from this date (default: {_DEFAULT_LOOKBACK_DAYS} days ago)",
+        help=f"Load prices and options metrics from this date (default: {_DEFAULT_LOOKBACK_DAYS} days ago)",
     )
     parser.add_argument("--limit", type=int, default=1000, help="Most passages to score in one run (default: 1000)")
     parser.add_argument(
@@ -124,6 +170,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         supabase = SupabaseClient.from_env(env)
         for name in _STEPS if args.step == "all" else [args.step]:
+            key = _OPTIONAL_STEP_KEYS.get(name)
+            if args.step == "all" and key and not env.get(key, "").strip():
+                print(f"{name}: skipped because {key} is not set", file=sys.stderr)
+                continue
             _STEPS[name](args, env, supabase)
     except LoaderError as exc:
         print(f"research-data: {exc}", file=sys.stderr)

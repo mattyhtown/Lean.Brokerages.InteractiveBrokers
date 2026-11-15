@@ -11,8 +11,9 @@ import pytest
 
 from research_data import cli, local_finbert, newsletters
 from research_data.cli import main as cli_main
-from research_data.http import HttpResponse, LoaderError, require_secure_url
+from research_data.http import HttpResponse, HttpStatusError, LoaderError, require_secure_url
 from research_data.local_finbert import LocalFinbert
+from research_data.news import NewsDigest, digest_items, fetch_digest
 from research_data.newsletters import (
     MAX_PASSAGE_CHARS,
     Newsletter,
@@ -21,9 +22,17 @@ from research_data.newsletters import (
     parse_message,
     ticker_passages,
 )
-from research_data.pipeline import Sentiment, load_newsletters, load_prices, score_passages
+from research_data.options import OptionsDay, OptionsDownload, download_options, parse_cores
+from research_data.pipeline import (
+    Sentiment,
+    load_news,
+    load_newsletters,
+    load_options,
+    load_prices,
+    score_passages,
+)
 from research_data.prices import DailyBar, PriceDownload, download_daily_bars, parse_bars
-from research_data.supabase import SupabaseClient
+from research_data.supabase import SupabaseClient, in_filter
 from research_data.tickers import Watchlist, extract_tickers
 
 WATCHLIST = Watchlist.parse("AAPL: Apple\nGOOGL: Alphabet, Google\nNVDA\n")
@@ -286,7 +295,7 @@ def test_a_fractional_raw_price_is_an_error_instead_of_being_cut_to_a_whole_numb
 
 
 class FakeHttp:
-    def __init__(self, responses: list[HttpResponse]) -> None:
+    def __init__(self, responses: list[HttpResponse | LoaderError]) -> None:
         self.responses = list(responses)
         self.calls: list[tuple[str, str, dict[str, str], bytes | None]] = []
 
@@ -294,7 +303,10 @@ class FakeHttp:
         self, method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout_seconds: int
     ) -> HttpResponse:
         self.calls.append((method, url, dict(headers), body))
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, LoaderError):
+            raise response
+        return response
 
 
 RANGE = json.dumps(
@@ -447,6 +459,23 @@ def test_newsletters_are_stored_once_and_passages_refresh_their_tickers() -> Non
     )
 
 
+def test_passages_that_no_longer_mention_a_ticker_stop_counting_but_keep_their_score() -> None:
+    received = datetime(2026, 11, 10, 20, 0, tzinfo=timezone.utc)
+    newsletter = Newsletter("ab", "a@substack.com", None, "Subject", received, "Tesla slid.\nApple won.")
+    stored = [
+        {"id": 7, "newsletter_id": "ab", "passage_index": 0},
+        {"id": 8, "newsletter_id": "ab", "passage_index": 1},
+    ]
+    supabase = FakeSupabase({"newsletter_passages": [stored]})
+    load_newsletters(supabase, [newsletter], WATCHLIST)
+    assert supabase.selects == [("newsletter_passages", {"newsletter_id": 'in.("ab")', "tickers": "neq.{}"})]
+    assert supabase.updates == [("newsletter_passages", {"id": 'in.("7")'}, {"tickers": []})]
+
+
+def test_in_filter_quotes_values_so_punctuation_in_them_is_kept() -> None:
+    assert in_filter(["perplexity:BRK.B:2026-11-10", 'a"b', 7]) == 'in.("perplexity:BRK.B:2026-11-10","a\\"b","7")'
+
+
 def test_scoring_saves_each_passage_and_stops_at_the_limit() -> None:
     supabase = FakeSupabase(
         {"newsletter_passages": [[{"id": 4, "passage_text": "Apple won."}, {"id": 5, "passage_text": "Apple lost."}]]}
@@ -503,6 +532,242 @@ def test_prices_cover_watchlist_and_mentioned_symbols() -> None:
             False,
         )
     ]
+
+
+# Shaped like ORATS /datav2/hist/cores, cut down to the requested fields.
+CORES = json.dumps(
+    {
+        "data": [
+            {"ticker": "AAPL", "tradeDate": "2019-11-27", "iv30d": 19.5, "updatedAt": "2019-11-27T20:46:01Z"},
+            {
+                "ticker": "AAPL",
+                "tradeDate": "2019-11-29",
+                "iv30d": 18.98,
+                "ivPctile1y": 18,
+                "orHv20d": 19.45,
+                "slope": 3.0127,
+                "contango": 0.55,
+                "cVolu": 164999,
+                "pVolu": 94247,
+                "cOi": 1831571,
+                "pOi": 2030053,
+                "updatedAt": "2019-11-29T17:46:01Z",
+            },
+        ]
+    }
+).encode("utf-8")
+CORE_DAY = OptionsDay(
+    "AAPL",
+    date(2019, 11, 29),
+    {
+        "iv_30d": 18.98,
+        "iv_percentile_1y": 18.0,
+        "hv_20d": 19.45,
+        "skew_slope": 3.0127,
+        "contango": 0.55,
+        "call_volume": 164999,
+        "put_volume": 94247,
+        "call_open_interest": 1831571,
+        "put_open_interest": 2030053,
+    },
+    datetime(2019, 11, 29, 17, 46, 1, tzinfo=timezone.utc),
+)
+
+
+def test_cores_are_parsed_with_missing_metrics_left_empty() -> None:
+    earlier, day = parse_cores(CORES)
+    assert day == CORE_DAY
+    assert earlier.metrics["iv_30d"] == 19.5
+    assert {name for name, value in earlier.metrics.items() if value is None} == set(CORE_DAY.metrics) - {"iv_30d"}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"message":"ok"}',
+        b'{"data":[{"tradeDate":"2019-11-29"}]}',
+        b'{"data":[{"ticker":"AAPL","tradeDate":"29/11/2019"}]}',
+        b'{"data":[{"ticker":"AAPL","tradeDate":"2019-11-29","iv30d":"18.98"}]}',
+        b'{"data":[{"ticker":"AAPL","tradeDate":"2019-11-29","cVolu":10.5}]}',
+    ],
+)
+def test_cores_in_an_unexpected_shape_are_an_error(body: bytes) -> None:
+    with pytest.raises(LoaderError, match="Unexpected ORATS"):
+        parse_cores(body)
+
+
+def test_options_are_requested_ten_tickers_at_a_time_and_kept_from_the_start_date() -> None:
+    symbols = ["AAPL", *(f"T{letter}" for letter in "ABCDEFGHIJK")]
+    not_found = HttpStatusError(404, "HTTP 404 from api.orats.io/datav2/hist/cores: Not Found")
+    http = FakeHttp([HttpResponse(200, CORES), not_found])
+    result = download_options("orats-token", symbols, date(2019, 11, 28), http)
+    assert result.days == [CORE_DAY]
+    assert result.warnings == [
+        "ORATS returned no options data since 2019-11-28 for: TA, TB, TC, TD, TE, TF, TG, TH, TI, TJ, TK"
+    ]
+    queries = [urllib.parse.parse_qs(urllib.parse.urlparse(url).query) for _, url, _, _ in http.calls]
+    assert [method for method, _, _, _ in http.calls] == ["GET", "GET"]
+    assert http.calls[0][1].startswith("https://api.orats.io/datav2/hist/cores?")
+    assert [query["ticker"] for query in queries] == [["AAPL,TA,TB,TC,TD,TE,TF,TG,TH,TI"], ["TJ,TK"]]
+    assert queries[0]["token"] == ["orats-token"]
+    assert queries[0]["fields"] == ["ticker,tradeDate,updatedAt,iv30d,ivPctile1y,orHv20d,slope,contango,cVolu,pVolu,cOi,pOi"]
+
+
+def test_an_orats_error_other_than_not_found_stops_the_download() -> None:
+    http = FakeHttp([HttpStatusError(403, "HTTP 403 from api.orats.io/datav2/hist/cores: denied")])
+    with pytest.raises(LoaderError, match="HTTP 403"):
+        download_options("bad-token", ["AAPL"], date(2019, 11, 28), http)
+
+
+def test_options_cover_watchlist_and_mentioned_symbols() -> None:
+    supabase = FakeSupabase({"mentioned_tickers": [[{"symbol": "TSLA"}]]})
+    requested: list[tuple[list[str], date]] = []
+
+    def download(symbols: list[str], start: date) -> OptionsDownload:
+        requested.append((symbols, start))
+        return OptionsDownload([CORE_DAY], ["ORATS returned no options data"])
+
+    result = load_options(supabase, download, WATCHLIST, date(2019, 11, 1))
+    assert requested == [(["AAPL", "GOOGL", "NVDA", "TSLA"], date(2019, 11, 1))]
+    assert result == (4, 1, ["ORATS returned no options data"])
+    assert supabase.upserts == [
+        (
+            "options_daily",
+            [
+                {
+                    "symbol": "AAPL",
+                    "trade_date": "2019-11-29",
+                    **CORE_DAY.metrics,
+                    "source_updated_at": "2019-11-29T17:46:01+00:00",
+                }
+            ],
+            "symbol,trade_date",
+            False,
+        )
+    ]
+
+
+def test_a_digest_answer_becomes_plain_sentences() -> None:
+    answer = (
+        "- **Apple** beat estimates and raised guidance.[1][2]\n"
+        "2. Apple faces a new EU fine, see https://example.com/story [3]\n"
+        "\n"
+        "\u2022 Apple `AAPL` named a new CFO.\n"
+    )
+    assert digest_items(answer) == [
+        "Apple beat estimates and raised guidance.",
+        "Apple faces a new EU fine, see",
+        "Apple AAPL named a new CFO.",
+    ]
+    assert digest_items("NONE") == digest_items(" none.\n") == digest_items("") == []
+
+
+def test_a_digest_asks_perplexity_for_the_last_day_and_is_stamped_after_the_answer() -> None:
+    answer = {"model": "sonar", "choices": [{"message": {"role": "assistant", "content": "Apple won a case.[1]"}}]}
+    http = FakeHttp([HttpResponse(200, json.dumps(answer).encode("utf-8"))])
+    fetched_at = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
+
+    def clock() -> datetime:
+        assert len(http.calls) == 1
+        return fetched_at
+
+    digest = fetch_digest("pplx-key", "AAPL", ["Apple"], http, clock)
+    assert digest == NewsDigest("AAPL", "sonar", fetched_at, ["Apple won a case."])
+    ((method, url, headers, body),) = http.calls
+    assert (method, url) == ("POST", "https://api.perplexity.ai/chat/completions")
+    assert headers["Authorization"] == "Bearer pplx-key"
+    request = json.loads(body or b"")
+    assert (request["model"], request["search_recency_filter"]) == ("sonar", "day")
+    assert "Apple (ticker AAPL)" in request["messages"][1]["content"]
+    assert "exactly: NONE" in request["messages"][1]["content"]
+
+
+def test_a_perplexity_answer_without_text_is_an_error() -> None:
+    http = FakeHttp([HttpResponse(200, b'{"choices":[]}')])
+    with pytest.raises(LoaderError, match="Unexpected Perplexity response for NVDA"):
+        fetch_digest("pplx-key", "NVDA", [], http)
+
+
+def test_news_is_fetched_once_per_symbol_and_day_and_tagged_with_its_symbol() -> None:
+    supabase = FakeSupabase({"newsletters": [[{"id": "perplexity:GOOGL:2026-11-10"}]]})
+    fetched_at = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
+    asked: list[tuple[str, list[str]]] = []
+
+    def fetch(symbol: str, names: list[str]) -> NewsDigest:
+        asked.append((symbol, names))
+        items = ["Apple beat estimates.", "Apple and Google settled."] if symbol == "AAPL" else []
+        return NewsDigest(symbol, "sonar", fetched_at, items)
+
+    assert load_news(supabase, fetch, WATCHLIST, date(2026, 11, 10)) == (2, 1, 2)
+    assert asked == [("AAPL", ["Apple"]), ("NVDA", [])]
+    assert supabase.selects == [("newsletters", {"source": "eq.perplexity", "id": "like.*:2026-11-10"})]
+    apple, apple_passages, nvidia, nvidia_passages = supabase.upserts
+    assert apple == (
+        "newsletters",
+        [
+            {
+                "id": "perplexity:AAPL:2026-11-10",
+                "source": "perplexity",
+                "sender": "perplexity",
+                "publication": "sonar",
+                "subject": "AAPL news digest 2026-11-10",
+                "received_at": "2026-11-10T15:00:00+00:00",
+                "body_text": "Apple beat estimates.\nApple and Google settled.",
+            }
+        ],
+        "id",
+        True,
+    )
+    assert apple_passages[1] == [
+        {
+            "newsletter_id": "perplexity:AAPL:2026-11-10",
+            "passage_index": 0,
+            "passage_text": "Apple beat estimates.",
+            "tickers": ["AAPL"],
+        },
+        {
+            "newsletter_id": "perplexity:AAPL:2026-11-10",
+            "passage_index": 1,
+            "passage_text": "Apple and Google settled.",
+            "tickers": ["AAPL"],
+        },
+    ]
+    # A day without news is stored too, so it is not asked for again.
+    assert (nvidia[1][0]["id"], nvidia[1][0]["body_text"]) == ("perplexity:NVDA:2026-11-10", "")
+    assert nvidia_passages[1] == []
+
+
+def test_all_leaves_out_news_and_options_when_their_keys_are_not_set(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran: list[str] = []
+    for name in ("PERPLEXITY_API_KEY", "ORATS_API_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase()))
+    monkeypatch.setattr(cli, "_STEPS", {name: lambda args, env, supabase, name=name: ran.append(name) for name in cli._STEPS})
+    assert cli_main(["all"]) == 0
+    assert ran == ["newsletters", "score", "prices"]
+    assert capsys.readouterr().err == (
+        "news: skipped because PERPLEXITY_API_KEY is not set\n"
+        "options: skipped because ORATS_API_TOKEN is not set\n"
+    )
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-key")
+    monkeypatch.setenv("ORATS_API_TOKEN", "orats-token")
+    ran.clear()
+    assert cli_main(["all"]) == 0
+    assert ran == ["newsletters", "news", "score", "prices", "options"]
+
+
+def test_a_step_run_by_name_reports_its_missing_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in ("PERPLEXITY_API_KEY", "ORATS_API_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase()))
+    assert cli_main(["news"]) == 1
+    assert "research-data: Missing PERPLEXITY_API_KEY" in capsys.readouterr().err
+    assert cli_main(["options"]) == 1
+    assert "research-data: Missing ORATS_API_TOKEN" in capsys.readouterr().err
 
 
 def test_cli_names_the_missing_setting(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
-from typing import Mapping
+from typing import Iterable, Mapping
 import urllib.parse
 
 from research_data.http import HttpCallable, LoaderError, require_secure_url, send
@@ -11,6 +11,12 @@ from research_data.http import HttpCallable, LoaderError, require_secure_url, se
 _KEY_ENVS = ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY")
 _WRITE_BATCH_ROWS = 500
 _READ_PAGE_ROWS = 1000
+
+
+def in_filter(values: Iterable[object]) -> str:
+    """A PostgREST `in` filter; values are quoted so that commas, dots and colons in them are kept."""
+    quoted = ('"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"' for value in values)
+    return f"in.({','.join(quoted)})"
 
 
 @dataclass(frozen=True)
