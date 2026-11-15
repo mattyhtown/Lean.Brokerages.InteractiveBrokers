@@ -8,7 +8,7 @@ from pathlib import Path
 
 from odte_spy_ibkr.backtest.calendar import iter_trading_days
 from odte_spy_ibkr.backtest.data_loader import load_chain_for_day
-from odte_spy_ibkr.backtest.diagnostics import explain_no_entry
+from odte_spy_ibkr.backtest.session_log import SessionLog, VerboseSessionReport
 from odte_spy_ibkr.backtest.spot_loader import load_spot_for_day
 from odte_spy_ibkr.backtest.ledger import DailyLedger
 from odte_spy_ibkr.backtest.metrics import summarize_backtest
@@ -47,28 +47,35 @@ def run_backtest(
     full_ledger = DailyLedger(equity_base=settings.backtest_equity_base)
     open_pos: OpenPosition | None = None
     trade_wins: list[bool] = []
-    no_entry_reasons: dict[str, int] = {}
+    verbose_report = VerboseSessionReport()
 
     for day in all_days:
         spot = load_spot_for_day(settings, ticker=settings.underlying, day=day)
         chain = load_chain_for_day(settings, ticker=settings.underlying, day=day, spot=spot)
-        pnl, open_pos, traded = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
-        full_ledger.record(day, pnl)
+        sim = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
+        open_pos = sim.open_position
+        full_ledger.record(day, sim.pnl)
         if day in score_days:
-            ledger.record(day, pnl)
-            if traded:
-                trade_wins.append(pnl > 0)
-        if verbose and not traded and open_pos is None and day in score_days:
-            from zoneinfo import ZoneInfo
-
-            et = ZoneInfo("America/New_York")
-            from datetime import datetime as dt
-
-            signal_at = dt.combine(day, dt.min.time(), tzinfo=et).replace(hour=11, minute=0)
-            skew = build_chain_skew(chain, expiry=today_expiry(day), spot=spot, as_of=signal_at)
-            ctx = build_backtest_context(settings, day=day, spot=spot, chain_skew=skew, now=signal_at)
-            reason = explain_no_entry(settings, ctx, chain) if ctx else "uw_skip_session"
-            no_entry_reasons[reason] = no_entry_reasons.get(reason, 0) + 1
+            ledger.record(day, sim.pnl)
+            if sim.traded:
+                trade_wins.append(sim.pnl > 0)
+        if verbose:
+            verbose_report.add(
+                SessionLog(
+                    day=day,
+                    reason=sim.session_reason,
+                    traded=sim.traded,
+                    pnl=sim.pnl,
+                    had_open_at_open=open_pos is not None and sim.session_reason.startswith("position_open"),
+                )
+            )
+            logger.info(
+                "session %s traded=%s pnl=%.2f reason=%s",
+                day.isoformat(),
+                sim.traded,
+                sim.pnl,
+                sim.session_reason,
+            )
 
     days = score_days if walk_forward else all_days
     returns = ledger.daily_return_series(days)
@@ -96,8 +103,17 @@ def run_backtest(
         "total_pnl": summary.total_pnl,
         "total_pnl_all_days": full_ledger.total_pnl(),
     }
-    if no_entry_reasons:
-        payload["no_entry_reasons"] = no_entry_reasons
+    if verbose_report.sessions:
+        payload["session_reason_counts"] = verbose_report.reason_counts
+        payload["sessions"] = [
+            {
+                "date": s.day.isoformat(),
+                "reason": s.reason,
+                "traded": s.traded,
+                "pnl": s.pnl,
+            }
+            for s in verbose_report.sessions
+        ]
     logger.info("Backtest summary: %s", json.dumps(payload))
     if report_path:
         out = Path(report_path)

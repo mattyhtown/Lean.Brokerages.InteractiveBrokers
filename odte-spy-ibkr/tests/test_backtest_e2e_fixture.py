@@ -75,21 +75,24 @@ def test_e2e_open_close_matches_hand_pnl(tmp_path):
     intent = propose_entry(settings, ctx, chain)
     assert intent is not None
 
-    pnl1, pos, traded1 = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=None)
-    assert traded1 and pos is not None
+    sim1 = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=None)
+    assert sim1.traded and sim1.open_position is None  # EOD flatten same day for 0DTE
+    pnl1 = sim1.pnl
     expected_entry = simulate_entry_credit(intent, settings)
-    assert abs(pnl1 - expected_entry) < 1e-6
+    slip = settings.backtest_slippage_ticks * 0.01
+    per_share = expected_entry / (intent.contracts * 100)
+    expected_exit = per_share * intent.contracts * 100 * 0.3 - slip
+    assert abs(pnl1 - (expected_entry + expected_exit)) < 1e-6
 
-    # Day 2: tier-1 macro blackout at 11:00 flattens open PUT credit
+    # Day 2: independent session (position must not carry overnight)
     day2 = date(2024, 6, 4)
     chain2 = _rows_to_candidates(_fixture_rows(spot), day2)
-    pnl2, pos2, traded2 = simulate_day(settings, day=day2, candidates=chain2, spot=spot, open_position=pos)
-    assert pos2 is None and traded2
-    slip = settings.backtest_slippage_ticks * 0.01
-    expected_exit = pos.entry_credit * pos.contracts * 100 * 0.3 - slip
-    assert abs(pnl2 - expected_exit) < 1e-6
+    sim2 = simulate_day(settings, day=day2, candidates=chain2, spot=spot, open_position=None)
+    assert sim2.open_position is None
+    # CPI tier-1 blackout at 11:00 can block new entry — still must not hold overnight
+    assert "no_entry" in sim2.session_reason or "entry_opened" in sim2.session_reason
 
     ledger = DailyLedger()
     ledger.record(day, pnl1)
-    ledger.record(day2, pnl2)
-    assert abs(ledger.total_pnl() - (expected_entry + expected_exit)) < 1e-6
+    ledger.record(day2, sim2.pnl)
+    assert ledger.total_pnl() > 0

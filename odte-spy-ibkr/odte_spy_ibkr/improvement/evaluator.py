@@ -50,11 +50,12 @@ def evaluate_candidate(candidate: ExperimentCandidate, *, end: date | None = Non
 
         spot = load_spot_for_day(settings, ticker=settings.underlying, day=day)
         chain = load_chain_for_day(settings, ticker=settings.underlying, day=day, spot=spot)
-        pnl, open_pos, traded = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
+        sim = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
+        open_pos = sim.open_position
         if day in score_days:
-            ledger.record(day, pnl)
-            if traded:
-                wins.append(pnl > 0)
+            ledger.record(day, sim.pnl)
+            if sim.traded:
+                wins.append(sim.pnl > 0)
     returns = ledger.daily_return_series(score_days)
     pnls = ledger.daily_pnl_series(score_days)
     summary = summarize_backtest(
