@@ -451,3 +451,58 @@ def test_cli_train_retrains_and_prints_the_score(
     assert lines[-1].startswith("train: 5-day model not trained: 80 sessions have a known 5-day return")
     (run,) = supabase.upserts[0][1]
     assert (run["model"], run["parameters"]) == (MODEL, PARAMETERS)
+
+
+def test_daily_goes_on_past_a_step_that_fails_and_retrains_last(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
+) -> None:
+    ran: list[str] = []
+
+    def step(name: str):
+        def run(args, env, supabase) -> None:
+            ran.append(name)
+            if name in ("newsletters", "prices"):
+                raise LoaderError(f"{name} is down")
+
+        return run
+
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase({})))
+    monkeypatch.setattr(cli, "_STEPS", {name: step(name) for name in cli._STEPS})
+    monkeypatch.setattr(cli, "_run_train", step("train"))
+    monkeypatch.setattr(cli, "_skip_reason", lambda name, env, args: "it is not set up" if name == "news" else None)
+    assert cli_main(["daily"]) == 1
+    assert ran == [
+        "newsletters",
+        "benzinga",
+        "alphavantage",
+        "podcasts",
+        "score",
+        "prices",
+        "options",
+        "adjustments",
+        "openbb",
+        "train",
+    ]
+    assert capsys.readouterr().err == (
+        "newsletters: failed: newsletters is down\n"
+        "news: skipped because it is not set up\n"
+        "prices: failed: prices is down\n"
+        "research-data: failed steps: newsletters, prices\n"
+    )
+
+    ran.clear()
+    monkeypatch.setattr(cli, "_STEPS", {name: lambda args, env, supabase, name=name: ran.append(name) for name in cli._STEPS})
+    assert cli_main(["daily"]) == 0
+    assert ran[-1] == "train" and len(ran) == 10
+    assert capsys.readouterr().err == "news: skipped because it is not set up\n"
+
+    # A failed retrain is a failed day too, and `all` still only loads.
+    def broken(args, env, supabase) -> None:
+        raise LoaderError("no model")
+
+    monkeypatch.setattr(cli, "_run_train", broken)
+    assert cli_main(["daily"]) == 1
+    assert capsys.readouterr().err.endswith("train: failed: no model\nresearch-data: failed steps: train\n")
+    ran.clear()
+    assert cli_main(["all"]) == 0
+    assert "train" not in ran and len(ran) == 9

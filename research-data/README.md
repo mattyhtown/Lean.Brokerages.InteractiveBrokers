@@ -109,6 +109,46 @@ from model_runs order by horizon_days, trained_at;
 
 **Predictions.** After the test, the model is trained on every row with a known return and predicts the newest session, the one whose return nobody knows yet. Those rows go to `model_predictions` and are never changed: a second run for the same session keeps the first prediction. `model_prediction_outcomes` shows each prediction next to the return that followed, null until the later close is loaded. Only the newest session is predicted, so a day on which `train` did not run has no prediction.
 
+## Running it every day
+
+```bash
+poetry install --extras "openbb train"
+poetry run research-data daily
+```
+
+`daily` runs every step of `all` and then `train`. Unlike `all`, it goes on to the next step when one fails, so one source being down costs neither the day's other sources nor the retrain, and it ends with an error that names the steps that failed. Add `local` to the extras and `--finbert local` to score without `HF_TOKEN`, and `podcasts` to transcribe audio.
+
+Run it once a day at the same time, weekends included: `news` only ever collects the day it runs on. A run in the morning, before the US market opens, loads the previous session's close and options row, and that session is the one predicted.
+
+On your own machine, a crontab line does it, with the variables from [Setup](#setup) set in the crontab or in a script it calls:
+
+```
+30 6 * * * cd /path/to/research-data && poetry run research-data daily >> daily.log 2>&1
+```
+
+To have Cursor run it instead, create an automation. It cannot be defined by a file in this repository, so it is set up once by hand:
+
+1. Add the variables from [Setup](#setup) as secrets in the Cursor dashboard under Cloud Agents, Secrets. `QUANTCONNECT_LEAN_DATA_DIR` is a folder on your own machine and has no use there.
+2. At [cursor.com/automations](https://cursor.com/automations), create an automation with a schedule trigger and a daily time or a cron expression such as `30 10 * * *`. Cursor's documentation does not say which time zone a cron expression is read in, so check when the first run starts.
+3. Choose this repository and the branch that holds `research-data/`.
+4. Use this as the prompt:
+
+```
+In the research-data folder, run these two commands:
+
+  poetry install --extras "openbb train"
+  poetry run research-data daily
+
+If poetry is not installed, install it first with
+`python3 -m pip install --user poetry`.
+Do not change, create or commit any file, and do not open a pull request.
+Reply with the lines the second command printed. If it ended with an error,
+say so first and name the steps that failed. Never print the value of an
+environment variable.
+```
+
+Each run is a cloud agent run and is billed as one. In an automation the `adjustments` step is left out, because the factor files live on your machine: run `adjustments` there now and then, or the newest rows stay marked `returns_adjusted` false.
+
 ## Podcasts
 
 `podcasts` needs no API key. List the shows to follow in `podcasts.txt`, one RSS feed address per line; a show's feed address is usually linked from its website or its hosting page. Only `https://` addresses are accepted.

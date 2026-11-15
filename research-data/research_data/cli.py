@@ -235,6 +235,8 @@ _OPTIONAL_STEP_SETTINGS = {
 
 # Not part of `all`, which only loads.
 _TRAIN = "train"
+# Every step of `all` and then `train`, going on past a step that fails.
+_DAILY = "daily"
 
 
 def _skip_reason(name: str, env: Mapping[str, str], args: argparse.Namespace) -> str | None:
@@ -259,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "step",
-        choices=[*_STEPS, "all", _TRAIN],
+        choices=[*_STEPS, "all", _TRAIN, _DAILY],
         help="newsletters: Gmail label to passages; news: today's Perplexity news digest per watchlist symbol; "
         "benzinga: Benzinga headlines per symbol; alphavantage: Alpha Vantage's scored news per symbol; "
         "podcasts: transcripts of the episodes in the listed podcast feeds; score: FinBERT on unscored "
@@ -268,7 +270,8 @@ def build_parser() -> argparse.ArgumentParser:
         "leaving out news, benzinga, alphavantage, options and adjustments when their setting is missing, "
         "podcasts when no feeds are listed and openbb when OpenBB is not installed; train: retrain the return "
         "model on training_rows, store how it scored on days it was not trained on and its predictions for the "
-        "newest session, which needs `poetry install --extras train`",
+        "newest session, which needs `poetry install --extras train`; daily: all and then train, going on to "
+        "the next step when one fails",
     )
     parser.add_argument("--label", default="Substack", help="Gmail label to read (default: Substack)")
     parser.add_argument(
@@ -308,11 +311,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_daily(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> int:
+    """One failed source should not cost the day's other sources, or the retrain on what did load."""
+    failed: list[str] = []
+    for name, run in {**_STEPS, _TRAIN: _run_train}.items():
+        try:
+            reason = _skip_reason(name, env, args)
+            if reason:
+                print(f"{name}: skipped because {reason}", file=sys.stderr)
+                continue
+            run(args, env, supabase)
+        except LoaderError as exc:
+            print(f"{name}: failed: {exc}", file=sys.stderr)
+            failed.append(name)
+    if failed:
+        print(f"research-data: failed steps: {', '.join(failed)}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     env = os.environ
     try:
         supabase = SupabaseClient.from_env(env)
+        if args.step == _DAILY:
+            return _run_daily(args, env, supabase)
         if args.step == _TRAIN:
             _run_train(args, env, supabase)
             return 0
