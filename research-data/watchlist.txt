@@ -1,0 +1,11 @@
+# One symbol per line, optionally followed by the names newsletters use for it:
+#   SYMBOL: Name, Other name
+# Matching is case-sensitive and whole-word. $CASHTAG and "NASDAQ: SYMBOL" mentions
+# are picked up for any symbol, listed here or not.
+AAPL: Apple
+MSFT: Microsoft
+NVDA: Nvidia, NVIDIA
+GOOGL: Alphabet, Google
+AMZN: Amazon
+META: Meta Platforms
+TSLA: Tesla

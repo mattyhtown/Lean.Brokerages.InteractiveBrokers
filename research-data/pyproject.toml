@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "qc-research-data"
+version = "0.1.0"
+description = "Loads newsletters, FinBERT sentiment and daily prices into Supabase as a model-training dataset"
+authors = ["QuantConnect IB Workspace Contributors"]
+readme = "README.md"
+packages = [{ include = "research_data" }]
+
+[tool.poetry.scripts]
+research-data = "research_data.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+qc-multi-llm = { path = "../multi-llm", develop = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
