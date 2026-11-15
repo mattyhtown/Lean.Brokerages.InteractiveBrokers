@@ -32,6 +32,7 @@ def test_research_ingest_argparse_explicit_source_not_merged():
 def test_default_providers_include_macro_inputs():
     settings = Settings()
     enabled = settings.providers_enabled_set
+    assert "openbb" in enabled
     assert "macro_news" in enabled
     assert "tradingeconomics" in enabled
     providers = build_providers(settings, ib_session=None)

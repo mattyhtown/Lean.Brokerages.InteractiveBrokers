@@ -35,13 +35,14 @@ This software is for education and paper testing only. Options trading involves 
 | `alpaca` | **Implemented** | `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `ALPACA_DATA_URL` — `GET /v2/stocks/SPY/snapshot`, optional `GET /v1beta1/options/snapshots/SPY` |
 | `coinbase` | **Implemented** | Public `GET https://api.exchange.coinbase.com/products/{id}/stats` for BTC/ETH 24h % → `macro_risk_off` |
 | `orats` | **Research ingest** | `ORATS_API_TOKEN` — historical 1-min strikes chain via `python -m odte_spy_ibkr.research ingest --source orats` (no live MCP) |
+| `openbb` | **Live + research** | `pip install 'odte-spy-ibkr[openbb]'`; optional `OPENBB_PAT` for Hub/historical; live chains default `OPENBB_LIVE_PROVIDER=cboe`; historical ingest `OPENBB_HISTORICAL_PROVIDER=intrinio` — see `data/research/openbb/README.md` |
 | `you_finance` | **Stub** | `YOU_FINANCE_ENABLED` + `YOU_API_KEY` |
 | `context` | **Stub** | `CONTEXT_ENABLED` + `CONTEXT_API_KEY` |
 | `sp_global` | **Stub** | `SP_GLOBAL_ENABLED` + `SP_GLOBAL_API_KEY` |
 | `daloopa` | **Stub** | `DALOOPA_ENABLED` + `DALOOPA_API_KEY` |
 | `perspective` | **Stub** | `PERSPECTIVE_ENABLED` + `PERSPECTIVE_API_KEY` |
 
-Enable providers: `PROVIDERS_ENABLED=ibkr,unusual_whales,alpaca,coinbase`
+Enable providers: `PROVIDERS_ENABLED=ibkr,unusual_whales,alpaca,openbb,coinbase`
 
 Missing keys are skipped gracefully (aggregator logs and continues).
 
@@ -131,6 +132,7 @@ See `data/research/README.md` for cache layout.
 python -m odte_spy_ibkr.research ingest --source alpaca --start 2026-07-01 --end 2026-11-05
 python -m odte_spy_ibkr.research ingest --source uw     # needs UNUSUAL_WHALES_API_KEY
 python -m odte_spy_ibkr.research ingest --source orats  # needs ORATS_API_TOKEN
+python -m odte_spy_ibkr.research ingest --source openbb  # pip install 'odte-spy-ibkr[openbb]'; OPENBB_PAT for dated history
 python -m odte_spy_ibkr.research ingest --source ibkr   # needs TWS/Gateway on IB_HOST:IB_PORT, READ_ONLY=true
 python -m odte_spy_ibkr.research ingest --source thetadata        # needs THETADATA_* + local Theta Terminal v3
 python -m odte_spy_ibkr.research ingest --source tradingeconomics # needs TRADING_ECONOMICS_API_KEY

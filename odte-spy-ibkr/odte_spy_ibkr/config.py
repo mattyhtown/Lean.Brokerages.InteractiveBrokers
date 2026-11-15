@@ -100,9 +100,14 @@ class Settings(BaseSettings):
 
     # Multi-provider market data
     providers_enabled: str = Field(
-        default="ibkr,unusual_whales,alpaca,macro_news,tradingeconomics",
+        default="ibkr,unusual_whales,alpaca,openbb,macro_news,tradingeconomics",
         alias="PROVIDERS_ENABLED",
     )
+
+    # OpenBB Platform (optional openbb package; PAT for Hub / historical providers)
+    openbb_pat: str = Field(default="", alias="OPENBB_PAT")
+    openbb_live_provider: str = Field(default="cboe", alias="OPENBB_LIVE_PROVIDER")
+    openbb_historical_provider: str = Field(default="intrinio", alias="OPENBB_HISTORICAL_PROVIDER")
 
     # Alpaca (read-only data cross-check)
     alpaca_api_key: str = Field(default="", alias="ALPACA_API_KEY")

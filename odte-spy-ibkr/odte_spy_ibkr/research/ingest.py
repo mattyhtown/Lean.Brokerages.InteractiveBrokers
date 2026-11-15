@@ -5,10 +5,12 @@ from datetime import date
 from typing import Literal
 
 from odte_spy_ibkr.config import Settings
+from odte_spy_ibkr.openbb.client import openbb_available
 from odte_spy_ibkr.research import (
     alpaca_ingest,
     ibkr_ingest,
     orats_ingest,
+    openbb_ingest,
     quantconnect_ingest,
     thetadata_ingest,
     tradingeconomics_ingest,
@@ -25,6 +27,7 @@ ResearchSource = Literal[
     "thetadata",
     "tradingeconomics",
     "quantconnect",
+    "openbb",
     "all",
 ]
 
@@ -46,17 +49,20 @@ def log_credential_status(settings: Settings) -> dict[str, bool]:
         "QUANTCONNECT_USER_ID": bool(
             settings.quantconnect_user_id.strip() and settings.quantconnect_api_token.strip()
         ),
+        "OPENBB_PACKAGE": openbb_available(),
+        "OPENBB_PAT": bool(settings.openbb_pat.strip()),
         "IB_SESSION": False,
     }
     logger.info(
         "Research credential scan: alpaca=%s uw=%s orats=%s thetadata=%s tradingeconomics=%s "
-        "quantconnect=%s (IB=TWS; Theta=loopback terminal; QC=LEAN CLI + Dataset Market)",
+        "quantconnect=%s openbb=%s (IB=TWS; Theta=loopback; QC=LEAN; OpenBB=optional pip package)",
         status["ALPACA_API_KEY"],
         status["UNUSUAL_WHALES_API_KEY"],
         status["ORATS_API_TOKEN"],
         status["THETADATA_USERNAME"],
         status["TRADING_ECONOMICS_API_KEY"],
         status["QUANTCONNECT_USER_ID"],
+        status["OPENBB_PACKAGE"],
     )
     return status
 
@@ -70,7 +76,7 @@ def run_ingest(
 ) -> dict[str, object]:
     log_credential_status(settings)
     if "all" in sources:
-        sources = ["alpaca", "uw", "ibkr", "orats", "thetadata", "tradingeconomics", "quantconnect"]
+        sources = ["alpaca", "uw", "ibkr", "orats", "thetadata", "tradingeconomics", "quantconnect", "openbb"]
     out: dict[str, object] = {}
     for src in sources:
         if src == "alpaca":
@@ -87,4 +93,6 @@ def run_ingest(
             out["tradingeconomics"] = tradingeconomics_ingest.ingest_range(settings, start=start, end=end)
         elif src == "quantconnect":
             out["quantconnect"] = quantconnect_ingest.ingest_range(settings, start=start, end=end)
+        elif src == "openbb":
+            out["openbb"] = openbb_ingest.ingest_range(settings, start=start, end=end)
     return out
