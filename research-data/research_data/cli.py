@@ -5,20 +5,24 @@ from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
 import sys
-from typing import Mapping
+from typing import Iterator, Mapping
 from zoneinfo import ZoneInfo
 
 from multi_llm.client import ChatRequest, LLMError, complete
 
 from research_data.adjustments import FactorSnapshot, read_factor_files
+from research_data.benzinga import Headline, headline_pages
 from research_data.http import LoaderError
 from research_data.local_finbert import LocalFinbert
+from research_data.market_sentiment import fetch_news_sentiment, openbb_installed
 from research_data.news import NewsDigest, fetch_digest
 from research_data.newsletters import fetch_newsletters
 from research_data.options import OptionsDay, download_day
 from research_data.pipeline import (
     Sentiment,
     load_adjustments,
+    load_benzinga,
+    load_market_sentiment,
     load_news,
     load_newsletters,
     load_options,
@@ -125,45 +129,79 @@ def _run_adjustments(args: argparse.Namespace, env: Mapping[str, str], supabase:
         print(f"adjustments: warning: {warning}", file=sys.stderr)
 
 
+def _run_benzinga(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
+    api_key = _required(env, "BENZINGA_API_KEY")
+
+    def pages(symbol: str, since: date) -> Iterator[list[Headline]]:
+        return headline_pages(api_key, symbol, since)
+
+    symbols, headlines, warnings = load_benzinga(supabase, pages, _read_watchlist(args.watchlist), args.since)
+    print(f"benzinga: read {headlines} headlines for {symbols} symbols since {args.since}")
+    for warning in warnings:
+        print(f"benzinga: warning: {warning}", file=sys.stderr)
+
+
+def _run_openbb(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
+    added, newest = load_market_sentiment(supabase, fetch_news_sentiment)
+    through = f", stored through {newest}" if newest else ""
+    print(f"openbb: added {added} days of the San Francisco Fed news sentiment index{through}")
+
+
 # In the order `all` runs them: text sources before scoring, and the sources that
-# follow mentioned tickers after the text that mentions them.
+# follow mentioned tickers after the newsletters that mention them.
 _STEPS = {
     "newsletters": _run_newsletters,
     "news": _run_news,
+    "benzinga": _run_benzinga,
     "score": _run_score,
     "prices": _run_prices,
     "options": _run_options,
     "adjustments": _run_adjustments,
+    "openbb": _run_openbb,
 }
 # `all` leaves these out when their setting is missing, so the original three steps keep running without them.
 _OPTIONAL_STEP_SETTINGS = {
     "news": "PERPLEXITY_API_KEY",
+    "benzinga": "BENZINGA_API_KEY",
     "options": "ORATS_API_TOKEN",
     "adjustments": "QUANTCONNECT_LEAN_DATA_DIR",
 }
+
+
+def _skip_reason(name: str, env: Mapping[str, str]) -> str | None:
+    """Why `all` leaves the step out, or None when it runs."""
+    setting = _OPTIONAL_STEP_SETTINGS.get(name)
+    if setting and not env.get(setting, "").strip():
+        return f"{setting} is not set"
+    if name == "openbb" and not openbb_installed():
+        return "OpenBB is not installed"
+    return None
 
 
 def build_parser() -> argparse.ArgumentParser:
     lookback = date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
     parser = argparse.ArgumentParser(
         prog="research-data",
-        description="Load newsletters, news digests, FinBERT sentiment, daily prices, options metrics and "
-        "split and dividend factors into Supabase.",
+        description="Load newsletters, news digests, Benzinga headlines, FinBERT sentiment, daily prices, "
+        "options metrics, split and dividend factors and a market news sentiment index into Supabase.",
     )
     parser.add_argument(
         "step",
         choices=[*_STEPS, "all"],
         help="newsletters: Gmail label to passages; news: today's Perplexity news digest per watchlist symbol; "
-        "score: FinBERT on unscored passages; prices: Databento daily bars; options: ORATS daily options "
-        "metrics; adjustments: split and dividend factors from QuantConnect factor files on this machine; "
-        "all: every step in that order, leaving out news, options and adjustments when their setting is missing",
+        "benzinga: Benzinga headlines per symbol; score: FinBERT on unscored passages; prices: Databento daily "
+        "bars; options: ORATS daily options metrics; adjustments: split and dividend factors from QuantConnect "
+        "factor files on this machine; openbb: the San Francisco Fed news sentiment index through OpenBB; "
+        "all: every step in that order, leaving out news, benzinga, options and adjustments when their setting "
+        "is missing and openbb when OpenBB is not installed",
     )
     parser.add_argument("--label", default="Substack", help="Gmail label to read (default: Substack)")
     parser.add_argument(
         "--since",
         type=date.fromisoformat,
         default=lookback,
-        help=f"Read newsletters received on or after this date (default: {_DEFAULT_LOOKBACK_DAYS} days ago)",
+        help="Read newsletters received and Benzinga headlines published on or after this date "
+        f"(default: {_DEFAULT_LOOKBACK_DAYS} days ago)",
     )
     parser.add_argument(
         "--start",
@@ -194,9 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         supabase = SupabaseClient.from_env(env)
         for name in _STEPS if args.step == "all" else [args.step]:
-            setting = _OPTIONAL_STEP_SETTINGS.get(name)
-            if args.step == "all" and setting and not env.get(setting, "").strip():
-                print(f"{name}: skipped because {setting} is not set", file=sys.stderr)
+            reason = _skip_reason(name, env) if args.step == "all" else None
+            if reason:
+                print(f"{name}: skipped because {reason}", file=sys.stderr)
                 continue
             _STEPS[name](args, env, supabase)
     except LoaderError as exc:

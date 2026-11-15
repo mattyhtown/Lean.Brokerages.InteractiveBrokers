@@ -1,21 +1,24 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
 import ssl
+from types import SimpleNamespace
 from typing import Mapping
 import urllib.parse
 import zipfile
 
 import pytest
 
-from research_data import cli, local_finbert, newsletters
+from research_data import cli, local_finbert, market_sentiment, newsletters
 from research_data.adjustments import FactorRow, FactorSnapshot, parse_factor_file, read_factor_files
+from research_data.benzinga import Headline, headline_pages, parse_headlines
 from research_data.cli import main as cli_main
 from research_data.http import HttpResponse, HttpStatusError, LoaderError, require_secure_url
 from research_data.local_finbert import LocalFinbert
+from research_data.market_sentiment import SentimentReading, fetch_news_sentiment
 from research_data.news import NewsDigest, digest_items, fetch_digest
 from research_data.newsletters import (
     MAX_PASSAGE_CHARS,
@@ -29,6 +32,8 @@ from research_data.options import OptionsDay, download_day, parse_cores
 from research_data.pipeline import (
     Sentiment,
     load_adjustments,
+    load_benzinga,
+    load_market_sentiment,
     load_news,
     load_newsletters,
     load_options,
@@ -862,7 +867,263 @@ def test_adjustments_dated_up_to_the_latest_price_raise_no_warning() -> None:
     assert load_adjustments(FakeSupabase(), lambda symbols: snapshot, WATCHLIST)[3] == []
 
 
-OPTIONAL_SETTINGS = ("PERPLEXITY_API_KEY", "ORATS_API_TOKEN", "QUANTCONNECT_LEAN_DATA_DIR")
+# Shaped like the article in Benzinga's API reference, cut down to the fields a headline request fills.
+def benzinga_article(article_id: int, created: str, title: str, author: str = "Benzinga Newsdesk") -> dict[str, object]:
+    return {
+        "id": article_id,
+        "author": author,
+        "created": created,
+        "updated": created,
+        "title": title,
+        "teaser": "",
+        "body": "",
+        "url": f"https://www.benzinga.com/news/{article_id}",
+        "image": [],
+        "channels": [{"name": "News"}],
+        "stocks": [{"name": "AAPL", "exchange": "NASDAQ"}, {"name": "NVDA", "exchange": "NASDAQ"}],
+        "tags": [],
+    }
+
+
+def benzinga_page(*articles: dict[str, object]) -> HttpResponse:
+    return HttpResponse(200, json.dumps(list(articles)).encode("utf-8"))
+
+
+def test_benzinga_articles_keep_their_creation_time_and_a_one_line_headline() -> None:
+    body = benzinga_page(
+        benzinga_article(36444586, "Mon, 01 Jan 2024 13:35:14 -0400", "Apple  Raises\n Guidance\x00 "),
+        benzinga_article(36444590, "Mon, 01 Jan 2024 18:00:00 +0000", "", author=" "),
+        {**benzinga_article(1, "Tue, 02 Jan 2024 09:00:00 -0500", "Numbered as text"), "id": "36444600", "author": None},
+    ).body
+    first, untitled, text_id = parse_headlines(body)
+    assert first == Headline(
+        "36444586",
+        datetime(2024, 1, 1, 13, 35, 14, tzinfo=timezone(timedelta(hours=-4))),
+        "Apple Raises Guidance",
+        "Benzinga Newsdesk",
+    )
+    assert first.created_at == datetime(2024, 1, 1, 17, 35, 14, tzinfo=timezone.utc)
+    assert (untitled.title, untitled.author) == ("", None)
+    assert (text_id.id, text_id.author) == ("36444600", None)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<result/>",
+        b'{"ok": false}',
+        b'["Access denied for user 0 \\"anonymous\\""]',
+        json.dumps([{**benzinga_article(1, "Mon, 01 Jan 2024 13:35:14 -0400", "x"), "id": 1.5}]).encode(),
+        json.dumps([{**benzinga_article(1, "Mon, 01 Jan 2024 13:35:14 -0400", "x"), "id": True}]).encode(),
+        json.dumps([{**benzinga_article(1, "Mon, 01 Jan 2024 13:35:14 -0400", "x"), "id": "12a"}]).encode(),
+        json.dumps([benzinga_article(1, "2024-01-01", "x")]).encode(),
+        # No offset, so the moment it names is unknown.
+        json.dumps([benzinga_article(1, "Mon, 01 Jan 2024 13:35:14", "x")]).encode(),
+        json.dumps([{**benzinga_article(1, "Mon, 01 Jan 2024 13:35:14 -0400", "x"), "title": None}]).encode(),
+        json.dumps([{**benzinga_article(1, "Mon, 01 Jan 2024 13:35:14 -0400", "x"), "author": 7}]).encode(),
+    ],
+)
+def test_a_benzinga_response_in_an_unexpected_shape_is_an_error(body: bytes) -> None:
+    with pytest.raises(LoaderError, match="Unexpected Benzinga"):
+        parse_headlines(body)
+
+
+def test_benzinga_headlines_are_paged_oldest_first_until_a_short_page() -> None:
+    created = "Mon, 09 Nov 2026 10:00:00 -0500"
+    full = [benzinga_article(number, created, f"Headline {number}") for number in range(100)]
+    full[3]["title"] = ""
+    http = FakeHttp([benzinga_page(*full), benzinga_page(full[99], benzinga_article(100, created, "Headline 100"))])
+    pages = list(headline_pages("bz-key", "BRK.B", date(2026, 11, 2), http))
+    assert [len(page) for page in pages] == [99, 1]
+    assert pages[0][3].id == "4" and pages[1][0].id == "100"
+    queries = [urllib.parse.parse_qs(urllib.parse.urlparse(url).query) for _, url, _, _ in http.calls]
+    assert queries[0] == {
+        "token": ["bz-key"],
+        "tickers": ["BRK.B"],
+        "dateFrom": ["2026-11-02"],
+        "displayOutput": ["headline"],
+        "sort": ["created:asc"],
+        "pageSize": ["100"],
+        "page": ["0"],
+    }
+    assert queries[1] == {**queries[0], "page": ["1"]}
+    assert all(
+        (method, url.split("?")[0], headers) == ("GET", "https://api.benzinga.com/api/v2/news", {"accept": "application/json"})
+        for method, url, headers, _ in http.calls
+    )
+
+
+def test_benzinga_without_headlines_is_an_empty_list_or_a_no_data_answer() -> None:
+    assert list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), FakeHttp([benzinga_page()]))) == []
+    no_data = HttpStatusError(404, 'HTTP 404 from api.benzinga.com/api/v2/news: {"errors": [{"code": "no_data_found"}]}')
+    assert list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), FakeHttp([no_data]))) == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        HttpStatusError(401, 'HTTP 401 from api.benzinga.com/api/v2/news: ["Access denied for user 0 \\"anonymous\\""]'),
+        HttpStatusError(404, "HTTP 404 from api.benzinga.com/api/v2/news: page not found"),
+        HttpStatusError(500, 'HTTP 500 from api.benzinga.com/api/v2/news: {"errors": [{"code": "no_data_found"}]}'),
+    ],
+)
+def test_a_benzinga_error_other_than_no_data_stops_the_download(error: HttpStatusError) -> None:
+    with pytest.raises(HttpStatusError) as raised:
+        list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), FakeHttp([error])))
+    assert raised.value is error
+
+
+def test_benzinga_paging_that_does_not_advance_is_an_error_instead_of_an_endless_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = "Mon, 09 Nov 2026 10:00:00 -0500"
+    full = benzinga_page(*(benzinga_article(number, created, f"Headline {number}") for number in range(100)))
+    with pytest.raises(LoaderError, match="same AAPL headlines for page 1"):
+        list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), FakeHttp([full, full])))
+
+    monkeypatch.setattr("research_data.benzinga.MAX_PAGES", 2)
+    more = benzinga_page(*(benzinga_article(number, created, f"Headline {number}") for number in range(100, 200)))
+    http = FakeHttp([full, more])
+    with pytest.raises(LoaderError, match="more than 200 AAPL headlines since 2026-11-02"):
+        list(headline_pages("bz-key", "AAPL", date(2026, 11, 2), http))
+    assert len(http.calls) == 2
+
+
+def test_benzinga_headlines_are_stored_per_symbol_as_first_seen_for_watchlist_and_mentioned_symbols() -> None:
+    supabase = FakeSupabase({"mentioned_tickers": [[{"symbol": "TSLA"}]]})
+    created = datetime(2026, 11, 10, 9, 30, tzinfo=timezone(timedelta(hours=-5)))
+    shared = Headline("77", created, "Apple and Nvidia extend chip deal", "Benzinga Newsdesk")
+    later = Headline("78", created + timedelta(hours=1), "Apple hits record", None)
+    asked: list[tuple[str, date]] = []
+
+    def pages(symbol: str, since: date) -> list[list[Headline]]:
+        asked.append((symbol, since))
+        return {"AAPL": [[shared], [later]], "NVDA": [[shared]]}.get(symbol, [])
+
+    result = load_benzinga(supabase, pages, WATCHLIST, date(2026, 11, 3))
+    assert result == (4, 3, ["Benzinga returned no headlines since 2026-11-03 for GOOGL, TSLA"])
+    assert asked == [(symbol, date(2026, 11, 3)) for symbol in ("AAPL", "GOOGL", "NVDA", "TSLA")]
+    assert [(table, conflict, ignore) for table, _, conflict, ignore in supabase.upserts] == [
+        ("newsletters", "id", True),
+        ("newsletter_passages", "newsletter_id,passage_index", True),
+    ] * 3
+    assert supabase.upserts[0][1] == [
+        {
+            "id": "benzinga:AAPL:77",
+            "source": "benzinga",
+            "sender": "Benzinga Newsdesk",
+            "publication": "Benzinga",
+            "subject": "Apple and Nvidia extend chip deal",
+            "received_at": "2026-11-10T09:30:00-05:00",
+            "body_text": "Apple and Nvidia extend chip deal",
+        }
+    ]
+    assert supabase.upserts[1][1] == [
+        {
+            "newsletter_id": "benzinga:AAPL:77",
+            "passage_index": 0,
+            "passage_text": "Apple and Nvidia extend chip deal",
+            "tickers": ["AAPL"],
+        }
+    ]
+    assert (supabase.upserts[2][1][0]["id"], supabase.upserts[2][1][0]["sender"]) == ("benzinga:AAPL:78", "benzinga")
+    assert supabase.upserts[5][1][0] == {**supabase.upserts[1][1][0], "newsletter_id": "benzinga:NVDA:77", "tickers": ["NVDA"]}
+
+
+def test_benzinga_with_no_headlines_at_all_is_reported_in_one_line() -> None:
+    result = load_benzinga(FakeSupabase(), lambda symbol, since: [], WATCHLIST, date(2026, 11, 3))
+    assert result == (3, 0, ["Benzinga returned no headlines since 2026-11-03 for any symbol"])
+
+
+class FakeObb:
+    """Stands in for `openbb.obb` with the result shape of the San Francisco Fed news sentiment call."""
+
+    def __init__(self, outcome: object) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.federal_reserve = SimpleNamespace(sf=SimpleNamespace(news_sentiment=self._news_sentiment))
+        self._outcome = outcome
+
+    def _news_sentiment(self, **arguments: object) -> object:
+        self.calls.append(arguments)
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return SimpleNamespace(results=self._outcome)
+
+
+class FakeOpenBBError(Exception):
+    pass
+
+
+def test_market_sentiment_is_every_published_day_of_the_whole_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    obb = FakeObb(
+        [
+            SimpleNamespace(date=date(2026, 11, 7), news_sentiment=0.0592549704015255),
+            SimpleNamespace(date=date(2026, 11, 8), news_sentiment=None),
+            SimpleNamespace(date=date(2026, 11, 9), news_sentiment=-0.01),
+        ]
+    )
+    monkeypatch.setattr(market_sentiment, "obb", obb)
+    assert fetch_news_sentiment() == [
+        SentimentReading(date(2026, 11, 7), 0.0592549704015255),
+        SentimentReading(date(2026, 11, 9), -0.01),
+    ]
+    assert obb.calls == [{}]
+
+
+def test_market_sentiment_names_the_extra_to_install_and_reports_an_openbb_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(market_sentiment, "obb", None)
+    assert not market_sentiment.openbb_installed()
+    with pytest.raises(LoaderError, match="run `poetry install --extras openbb`"):
+        fetch_news_sentiment()
+    monkeypatch.setattr(market_sentiment, "obb", FakeObb(FakeOpenBBError("\n[Unexpected Error] -> ProxyError")))
+    monkeypatch.setattr(market_sentiment, "OpenBBError", FakeOpenBBError, raising=False)
+    assert market_sentiment.openbb_installed()
+    with pytest.raises(LoaderError) as raised:
+        fetch_news_sentiment()
+    assert str(raised.value) == (
+        "OpenBB could not load the San Francisco Fed news sentiment index: [Unexpected Error] -> ProxyError"
+    )
+
+
+@pytest.mark.skipif(not market_sentiment.openbb_installed(), reason="needs the openbb extra and the network")
+def test_openbb_returns_the_published_index_as_daily_readings() -> None:
+    readings = fetch_news_sentiment()
+    days = [reading.observation_date for reading in readings]
+    assert days[0] == date(1980, 1, 1) and days == sorted(set(days))
+    assert all(isinstance(reading.value, float) and -2 < reading.value < 2 for reading in readings)
+    # Daily without gaps since 1985, which the 21-day lookup in training_rows relies on.
+    recent = [day for day in days if day >= date(1985, 1, 1)]
+    assert all((later - earlier).days == 1 for earlier, later in zip(recent, recent[1:]))
+
+
+def test_market_sentiment_adds_only_days_newer_than_the_stored_ones() -> None:
+    readings = [SentimentReading(date(2026, 11, day), day / 100) for day in (6, 7, 8)]
+    first = FakeSupabase()
+    assert load_market_sentiment(first, lambda: readings) == (3, date(2026, 11, 8))
+    assert first.upserts == [
+        (
+            "market_news_sentiment",
+            [
+                {"observation_date": "2026-11-06", "value": 0.06},
+                {"observation_date": "2026-11-07", "value": 0.07},
+                {"observation_date": "2026-11-08", "value": 0.08},
+            ],
+            "observation_date",
+            True,
+        )
+    ]
+    later = FakeSupabase({"market_news_sentiment": [[{"observation_date": "2026-11-07"}]]})
+    assert load_market_sentiment(later, lambda: readings) == (1, date(2026, 11, 8))
+    assert [row["observation_date"] for row in later.upserts[0][1]] == ["2026-11-08"]
+    current = FakeSupabase({"market_news_sentiment": [[{"observation_date": "2026-11-08"}]]})
+    assert load_market_sentiment(current, lambda: readings) == (0, date(2026, 11, 8))
+    assert current.upserts[0][1] == []
+    assert load_market_sentiment(FakeSupabase(), lambda: []) == (0, None)
+
+
+OPTIONAL_SETTINGS = ("PERPLEXITY_API_KEY", "BENZINGA_API_KEY", "ORATS_API_TOKEN", "QUANTCONNECT_LEAN_DATA_DIR")
 
 
 def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
@@ -873,19 +1134,25 @@ def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase()))
     monkeypatch.setattr(cli, "_STEPS", {name: lambda args, env, supabase, name=name: ran.append(name) for name in cli._STEPS})
+    monkeypatch.setattr(market_sentiment, "obb", None)
     assert cli_main(["all"]) == 0
     assert ran == ["newsletters", "score", "prices"]
     assert capsys.readouterr().err == (
         "news: skipped because PERPLEXITY_API_KEY is not set\n"
+        "benzinga: skipped because BENZINGA_API_KEY is not set\n"
         "options: skipped because ORATS_API_TOKEN is not set\n"
         "adjustments: skipped because QUANTCONNECT_LEAN_DATA_DIR is not set\n"
+        "openbb: skipped because OpenBB is not installed\n"
     )
     monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-key")
+    monkeypatch.setenv("BENZINGA_API_KEY", "bz-key")
     monkeypatch.setenv("ORATS_API_TOKEN", "orats-token")
     monkeypatch.setenv("QUANTCONNECT_LEAN_DATA_DIR", "/lean/data")
+    monkeypatch.setattr(market_sentiment, "obb", FakeObb([]))
     ran.clear()
     assert cli_main(["all"]) == 0
-    assert ran == ["newsletters", "news", "score", "prices", "options", "adjustments"]
+    assert ran == ["newsletters", "news", "benzinga", "score", "prices", "options", "adjustments", "openbb"]
+    assert capsys.readouterr().err == ""
 
 
 def test_a_step_run_by_name_reports_its_missing_setting(
@@ -900,6 +1167,43 @@ def test_a_step_run_by_name_reports_its_missing_setting(
     assert "research-data: Missing ORATS_API_TOKEN" in capsys.readouterr().err
     assert cli_main(["adjustments"]) == 1
     assert "research-data: Missing QUANTCONNECT_LEAN_DATA_DIR" in capsys.readouterr().err
+    assert cli_main(["benzinga"]) == 1
+    assert "research-data: Missing BENZINGA_API_KEY" in capsys.readouterr().err
+    monkeypatch.setattr(market_sentiment, "obb", None)
+    assert cli_main(["openbb"]) == 1
+    assert "research-data: The openbb step needs OpenBB's Federal Reserve extension" in capsys.readouterr().err
+
+
+def test_cli_loads_benzinga_headlines_since_the_given_date_and_the_market_index(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    watchlist = tmp_path / "watchlist.txt"
+    watchlist.write_text("AAPL: Apple\nNVDA\n")
+    supabase = FakeSupabase()
+    asked: list[tuple[str, str, date]] = []
+
+    def pages(token: str, symbol: str, since: date) -> list[list[Headline]]:
+        asked.append((token, symbol, since))
+        created = datetime(2026, 11, 10, 14, 30, tzinfo=timezone.utc)
+        return [[Headline("77", created, "Apple hits record", None)]] if symbol == "AAPL" else []
+
+    monkeypatch.setenv("BENZINGA_API_KEY", " bz-key ")
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: supabase))
+    monkeypatch.setattr(cli, "headline_pages", pages)
+    assert cli_main(["benzinga", "--since", "2026-11-03", "--watchlist", str(watchlist)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "benzinga: read 1 headlines for 2 symbols since 2026-11-03\n"
+    assert captured.err == "benzinga: warning: Benzinga returned no headlines since 2026-11-03 for NVDA\n"
+    assert asked == [("bz-key", "AAPL", date(2026, 11, 3)), ("bz-key", "NVDA", date(2026, 11, 3))]
+
+    monkeypatch.setattr(cli, "fetch_news_sentiment", lambda: [SentimentReading(date(2026, 11, 8), 0.09)])
+    assert cli_main(["openbb"]) == 0
+    assert capsys.readouterr().out == (
+        "openbb: added 1 days of the San Francisco Fed news sentiment index, stored through 2026-11-08\n"
+    )
+    monkeypatch.setattr(cli, "fetch_news_sentiment", lambda: [])
+    assert cli_main(["openbb"]) == 0
+    assert capsys.readouterr().out == "openbb: added 0 days of the San Francisco Fed news sentiment index\n"
 
 
 def test_cli_reads_factor_files_from_the_lean_data_folder(
