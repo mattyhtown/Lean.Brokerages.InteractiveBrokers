@@ -5,7 +5,9 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
 
 from research_data.adjustments import DOWNLOAD_COMMAND, FactorSnapshot
+from research_data.benzinga import Headline
 from research_data.http import LoaderError
+from research_data.market_sentiment import SentimentReading
 from research_data.news import NewsDigest
 from research_data.newsletters import Newsletter, passage_chunks, ticker_passages
 from research_data.options import OptionsDay
@@ -19,6 +21,7 @@ _NEWSLETTER_BATCH_ROWS = 25
 _UNTAG_BATCH_ROWS = 200
 GMAIL_SOURCE = "gmail"
 PERPLEXITY_SOURCE = "perplexity"
+BENZINGA_SOURCE = "benzinga"
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,8 @@ PriceDownloader = Callable[[list[str], date], PriceDownload]
 OptionsDownloader = Callable[[list[str], date], list[OptionsDay]]
 FactorReader = Callable[[list[str]], FactorSnapshot]
 NewsFetcher = Callable[[str, list[str]], NewsDigest]
+HeadlinePager = Callable[[str, date], Iterable[list[Headline]]]
+MarketSentimentFetcher = Callable[[], list[SentimentReading]]
 
 
 def load_newsletters(
@@ -321,3 +326,92 @@ def load_news(
         fetched += 1
         items += len(chunks)
     return fetched, len(digest_ids) - fetched, items
+
+
+def load_benzinga(
+    supabase: SupabaseClient,
+    headline_pages: HeadlinePager,
+    watchlist: Watchlist,
+    since: date,
+) -> tuple[int, int, list[str]]:
+    """Store Benzinga's headlines since `since` for every watchlist symbol and every mentioned ticker.
+
+    A headline is stored once for each symbol Benzinga returned it for, as a passage of that symbol
+    alone, so the symbols it counts toward never depend on which other symbols were loaded. Each
+    page is saved as it arrives, and a headline already stored stays as it was first seen.
+    Returns how many symbols were looked up, how many headlines were read, and warnings.
+    """
+    symbols = _source_symbols(supabase, watchlist)
+    read = 0
+    missing: list[str] = []
+    for symbol in symbols:
+        found = False
+        for page in headline_pages(symbol, since):
+            ids = {headline.id: f"{BENZINGA_SOURCE}:{symbol}:{headline.id}" for headline in page}
+            supabase.upsert(
+                "newsletters",
+                [
+                    {
+                        "id": ids[headline.id],
+                        "source": BENZINGA_SOURCE,
+                        "sender": headline.author or BENZINGA_SOURCE,
+                        "publication": "Benzinga",
+                        "subject": headline.title,
+                        "received_at": headline.created_at.isoformat(),
+                        "body_text": headline.title,
+                    }
+                    for headline in page
+                ],
+                on_conflict="id",
+                ignore_duplicates=True,
+            )
+            supabase.upsert(
+                "newsletter_passages",
+                [
+                    {
+                        "newsletter_id": ids[headline.id],
+                        "passage_index": 0,
+                        "passage_text": headline.title,
+                        "tickers": [symbol],
+                    }
+                    for headline in page
+                ],
+                on_conflict="newsletter_id,passage_index",
+                ignore_duplicates=True,
+            )
+            read += len(page)
+            found = True
+        if not found:
+            missing.append(symbol)
+    warnings = []
+    if missing:
+        who = ", ".join(missing) if len(missing) < len(symbols) else "any symbol"
+        warnings.append(f"Benzinga returned no headlines since {since} for {who}")
+    return len(symbols), read, warnings
+
+
+def load_market_sentiment(
+    supabase: SupabaseClient,
+    fetch: MarketSentimentFetcher,
+) -> tuple[int, date | None]:
+    """Store the days of the San Francisco Fed news sentiment index that are newer than the stored ones.
+
+    The Fed revises every earlier day with each release. Stored days are never rewritten, so
+    each keeps the value of the release this loader first saw it in. Returns how many days were
+    added and the newest day stored.
+    """
+    newest = supabase.select("market_news_sentiment", columns="observation_date", order="observation_date.desc", limit=1)
+    stored_through = date.fromisoformat(str(newest[0]["observation_date"])) if newest else None
+    readings = [
+        reading for reading in fetch() if stored_through is None or reading.observation_date > stored_through
+    ]
+    supabase.upsert(
+        "market_news_sentiment",
+        [
+            {"observation_date": reading.observation_date.isoformat(), "value": reading.value}
+            for reading in readings
+        ],
+        on_conflict="observation_date",
+        ignore_duplicates=True,
+    )
+    return len(readings), max((reading.observation_date for reading in readings), default=stored_through)
