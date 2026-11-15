@@ -87,10 +87,18 @@ export function RiskContent({ state }: { state: DeskState }) {
         <strong>{flatten?.rth ? 'open' : 'closed'}</strong>
       </div>
       <div className="kv warn">
-        <span>Orders</span>
-        <strong>OFF</strong>
+        <span>UI orders</span>
+        <strong>LOCKED</strong>
       </div>
-      <p className="muted">{state.safety?.ordersLockedReason ?? 'ENABLE_ORDERS locked'}</p>
+      <div className="kv">
+        <span>Engine ENABLE_ORDERS</span>
+        <strong>{state.safety?.enableOrders ? 'true' : 'false'}</strong>
+      </div>
+      <div className="kv">
+        <span>Engine READ_ONLY</span>
+        <strong>{state.safety?.readOnly === false ? 'false' : 'true'}</strong>
+      </div>
+      <p className="muted">{state.safety?.ordersLockedReason ?? 'Desk UI cannot place orders'}</p>
     </div>
   )
 }

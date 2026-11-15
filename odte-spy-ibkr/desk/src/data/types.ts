@@ -16,6 +16,8 @@ export interface SafetyState {
   ordersLockedReason: string
   killSwitchArmed: boolean
   killSwitchLabel: string
+  /** Desk chrome always treats this as true — UI cannot place orders */
+  uiOrdersLocked?: boolean
 }
 
 export interface FlattenState {
@@ -97,5 +99,7 @@ export interface DeskState {
   macro: MacroState
   backtest: BacktestState
   stations: StationMeta[]
-  source: 'mock' | 'engine' | 'static'
+  source: 'mock' | 'engine' | 'static' | 'file'
+  degraded?: string[]
+  tick?: number
 }

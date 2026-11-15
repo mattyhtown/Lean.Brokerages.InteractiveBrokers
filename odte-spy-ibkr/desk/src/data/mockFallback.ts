@@ -1,7 +1,7 @@
 import type { DeskState } from './types'
 
 export const mockDeskState: DeskState = {
-  asOf: '2026-11-14T15:42:18-05:00',
+  asOf: '2026-11-13T15:42:18-05:00',
   brand: 'ODTE Desk',
   symbol: 'SPY',
   mode: 'strict',

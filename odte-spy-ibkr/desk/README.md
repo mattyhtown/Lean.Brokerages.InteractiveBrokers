@@ -1,10 +1,24 @@
-# ODTE Desk — strict 3D trading room
+# ODTE Desk — live 3D trading room
 
-Vite + React + TypeScript + React Three Fiber room for the **ODTE SPY** system.
+Vite + React + TypeScript + React Three Fiber room for **ODTE SPY**.
 
-Orders stay **OFF**. The UI never sets `ENABLE_ORDERS`. Kill switch, Sharpe / macro / flow gates, flatten rules, and read-only signals / positions appear as suspended panels inside a scaffolded warehouse desk.
+Orders stay **UI-locked**. The desk never places trades and never sets `ENABLE_ORDERS=true`.
 
-## Run
+## Live mode (preferred)
+
+Terminal 1 — state API (polls settings, journal Sharpe, gates, providers; IBKR optional):
+
+```bash
+cd odte-spy-ibkr
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+export ENABLE_ORDERS=false
+python -m odte_spy_ibkr.desk_api --interval 5
+# → http://127.0.0.1:8787/desk/state
+# → writes data/desk/signal_state.json each tick
+```
+
+Terminal 2 — UI:
 
 ```bash
 cd odte-spy-ibkr/desk
@@ -12,44 +26,36 @@ npm install
 npm run dev
 ```
 
-Open the printed local URL (default `http://localhost:5173`). Drag to orbit, scroll to zoom.
+Vite proxies `/api/desk/state` → the API (no CORS). The room polls every ~4s; HUD shows `data: engine · tick N` and a live `asOf`.
 
-Production build:
+### What “live” means
+
+| Feed | Source |
+|------|--------|
+| Sharpe / backtest panel | `data/journal/daily_pnl.jsonl` |
+| RTH / flatten / risk gate | Wall-clock + `Settings` |
+| Macro / flow / spot / skew | Provider aggregator (Alpaca/UW/etc. if configured) |
+| Signals | Built each tick from gates + context |
+| Degraded | Providers/IBKR missing → still refreshes clocks + journal |
+
+Without TWS/keys the loop still runs: panels update, `degraded` lists why providers failed. Static mock is **fallback only** if the API is down.
+
+## Safety
+
+- Desk API forces `ENABLE_ORDERS=false` in-process
+- HUD shows engine `ENABLE_ORDERS` / `READ_ONLY` truthfully + **UI ORDERS LOCKED**
+- No order ticket exists in the UI
+
+## Optional env
+
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `VITE_DESK_POLL_MS` | `4000` | Poll interval |
+| `VITE_DESK_STATE_URL` | `http://127.0.0.1:8787/desk/state` | Direct URL if proxy unused |
+
+## Build
 
 ```bash
 npm run build
 npm run preview
 ```
-
-## Data: mock vs live
-
-| Source | How | Requires IBKR? |
-|--------|-----|----------------|
-| **Static mock** (default) | `public/mock/desk-state.json` (+ embedded fallback) | No |
-| **Optional local engine** | Set `VITE_DESK_TRY_ENGINE=1` and optionally `VITE_DESK_STATE_URL` (default `http://127.0.0.1:8787/desk/state`) | No — only if you expose a read-only JSON endpoint |
-
-`loadDeskState()` always forces `enableOrders: false` and `readOnly: true` after any fetch.
-
-There is **no order ticket** and **no control** that arms live placement.
-
-## Stations in the room
-
-1. **Signals** — proposed spreads, blocked reasons, empty positions  
-2. **Risk** — kill / flatten / limits / ORDERS OFF lock  
-3. **Backtest** — rolling Sharpe snapshot  
-4. **Macro** — headlines + blackout / risk-off  
-5. **Chain skew** — `net_call_bias` meter  
-
-Scaffolding frames, suspended cables, dust motes, and a pulsing kill pillar give depth and motion without dashboard-card clutter in the hero view. Brand **ODTE Desk** is large wall type in the first composition.
-
-## Safety contract
-
-- Matches engine defaults: `ENABLE_ORDERS=false`, `READ_ONLY=true`, `LIVE_TRADING=false`  
-- UI cannot flip those flags  
-- Strict mode badge + ORDERS OFF chrome always visible  
-
-## Stack
-
-- Vite 8 / React 19 / TypeScript  
-- `three`, `@react-three/fiber`, `@react-three/drei`  
-- Fonts: **Syne** (display) + **IBM Plex Mono** (data)

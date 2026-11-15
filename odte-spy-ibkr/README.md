@@ -151,17 +151,19 @@ python -m odte_spy_ibkr.research evaluate --run 2
 
 Neither UW, IBKR, ORATS, Theta Data, Trading Economics, nor QuantConnect ingest was executed against live services in the cloud agent environment (mocked unit tests only).
 
-## ODTE Desk (3D UI)
+## ODTE Desk (3D UI — live)
 
-Strict, orders-off trading room (Vite + React + R3F) under `desk/`:
+Strict trading room (Vite + React + R3F) under `desk/`. Live state from `desk_api`:
 
 ```bash
-cd desk
-npm install
-npm run dev
+# Terminal 1 — live state (IBKR optional; ENABLE_ORDERS forced false)
+python -m odte_spy_ibkr.desk_api --interval 5
+
+# Terminal 2
+cd desk && npm install && npm run dev
 ```
 
-See `desk/README.md`. Default data is static mock JSON; the UI never enables `ENABLE_ORDERS`.
+See `desk/README.md`. Panels poll `/api/desk/state`. The UI never places orders.
 
 ## Continuous improvement
 

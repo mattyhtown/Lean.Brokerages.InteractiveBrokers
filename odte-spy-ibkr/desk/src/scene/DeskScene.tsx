@@ -1,6 +1,6 @@
 import { Suspense } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { Environment, ContactShadows } from '@react-three/drei'
+import { ContactShadows } from '@react-three/drei'
 import type { DeskState } from '../data/types'
 import { palette } from './materials'
 import { Room } from './Room'
@@ -67,14 +67,14 @@ function SceneBody({ state }: Props) {
       </FloatingPanel>
 
       <FloatingPanel
-        position={[3.5, 2.45, 0.1]}
+        position={[3.5, 2.55, 0.1]}
         rotation={[0, -0.4, 0]}
         title="Risk"
         subtitle="Kill · flatten · limits"
         swayPhase={1.1}
         accent={palette.coral}
-        width={2.2}
-        height={1.7}
+        width={2.35}
+        height={2.05}
       >
         <RiskContent state={state} />
       </FloatingPanel>
@@ -118,7 +118,7 @@ function SceneBody({ state }: Props) {
       </FloatingPanel>
 
       <ContactShadows position={[0, 0.01, 0]} opacity={0.45} scale={18} blur={2.4} far={8} />
-      <Environment preset="warehouse" environmentIntensity={0.25} />
+      {/* Local lights only — no external HDRI so the room never hangs on Suspense */}
       <CameraRig />
     </>
   )

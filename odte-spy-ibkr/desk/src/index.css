@@ -119,7 +119,17 @@ body,
   color: var(--fog);
   font-family: 'IBM Plex Mono', monospace;
   padding: 0.55rem 0.65rem;
-  overflow: hidden;
+  overflow: hidden auto;
+}
+
+.src-pill.live {
+  border-color: rgba(125, 206, 160, 0.55);
+  color: var(--mint);
+}
+
+.src-pill.warn {
+  border-color: rgba(224, 122, 95, 0.55);
+  color: var(--coral);
 }
 
 .panel-head h2 {

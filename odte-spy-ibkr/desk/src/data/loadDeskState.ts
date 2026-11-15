@@ -2,61 +2,82 @@ import type { DeskState } from './types'
 import { mockDeskState } from './mockFallback'
 import { parseDeskState } from './parseDeskState'
 
-const ENGINE_URL =
-  import.meta.env.VITE_DESK_STATE_URL?.trim() || 'http://127.0.0.1:8787/desk/state'
+/** Same-origin proxy → desk_api (avoids CORS). Fallback to direct URL. */
+const ENGINE_URLS = [
+  '/api/desk/state',
+  import.meta.env.VITE_DESK_STATE_URL?.trim() || 'http://127.0.0.1:8787/desk/state',
+]
 
 /**
- * Prefer static mock JSON shipped with the app.
- * Optionally attempt a local engine endpoint — never requires IBKR.
- * ENABLE_ORDERS is forced false regardless of payload.
+ * Prefer live desk_api / signal_state. Static mock is fallback only.
+ * Desk UI never places orders; engine safety flags are shown truthfully.
  * Malformed JSON keeps the previous usable state.
  */
-export async function loadDeskState(): Promise<DeskState> {
-  let state: DeskState = mockDeskState
+export async function loadDeskState(prior: DeskState = mockDeskState): Promise<DeskState> {
+  let state: DeskState = prior
+
+  for (const url of ENGINE_URLS) {
+    try {
+      const res = await fetch(url, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(2500),
+      })
+      if (!res.ok) continue
+      const parsed = parseDeskState(await res.json(), state)
+      if (parsed) {
+        return finalizeDeskState({ ...parsed, source: 'engine' })
+      }
+    } catch {
+      // try next URL
+    }
+  }
+
+  // Optional file mirror via Vite public / or proxied path
+  try {
+    const res = await fetch('/api/desk/signal_state.json', {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(1500),
+    })
+    if (res.ok) {
+      const parsed = parseDeskState(await res.json(), state)
+      if (parsed) {
+        return finalizeDeskState({ ...parsed, source: 'file' })
+      }
+    }
+  } catch {
+    // continue
+  }
 
   try {
     const res = await fetch('/mock/desk-state.json', { cache: 'no-store' })
     if (res.ok) {
       const parsed = parseDeskState(await res.json(), state)
       if (parsed) {
-        state = { ...parsed, source: 'static' }
+        return finalizeDeskState({ ...parsed, source: 'static' })
       }
     }
   } catch {
-    // keep embedded mock
+    // keep prior / mock
   }
 
-  if (import.meta.env.VITE_DESK_TRY_ENGINE === '1') {
-    try {
-      const res = await fetch(ENGINE_URL, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(1500),
-      })
-      if (res.ok) {
-        const parsed = parseDeskState(await res.json(), state)
-        if (parsed) {
-          state = { ...parsed, source: 'engine' }
-        }
-        // else retain prior mock/static — do not replace with bad engine data
-      }
-    } catch {
-      // optional — stay on mock/static
-    }
-  }
-
-  return lockOrders(state)
+  return finalizeDeskState(state.source === 'mock' ? state : { ...state, source: state.source })
 }
 
-function lockOrders(state: DeskState): DeskState {
+/** Strict desk chrome: mode forced; UI order lock always on; engine flags preserved. */
+export function finalizeDeskState(state: DeskState): DeskState {
+  const engineEnable = Boolean(state.safety?.enableOrders)
+  const engineReadOnly = state.safety?.readOnly !== false
   return {
     ...state,
+    mode: 'strict',
     safety: {
       ...state.safety,
-      enableOrders: false,
-      readOnly: true,
+      enableOrders: engineEnable,
+      readOnly: engineReadOnly,
+      uiOrdersLocked: true,
       ordersLockedReason:
-        state.safety.ordersLockedReason ||
-        'ENABLE_ORDERS is false — UI cannot arm live placement',
+        state.safety?.ordersLockedReason ||
+        `Desk UI locked · engine ENABLE_ORDERS=${engineEnable} READ_ONLY=${engineReadOnly}`,
     },
   }
 }

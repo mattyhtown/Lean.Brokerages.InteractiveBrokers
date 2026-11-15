@@ -4,3 +4,4 @@ __pycache__/
 .env
 config.yaml
 .pytest_cache/
+data/desk/

@@ -68,6 +68,7 @@ function parseSafety(raw: unknown, fallback: SafetyState): SafetyState {
     ordersLockedReason: asString(raw.ordersLockedReason, fallback.ordersLockedReason),
     killSwitchArmed: asBoolean(raw.killSwitchArmed, fallback.killSwitchArmed),
     killSwitchLabel: asString(raw.killSwitchLabel, fallback.killSwitchLabel),
+    uiOrdersLocked: asBoolean(raw.uiOrdersLocked, true),
   }
 }
 
@@ -209,8 +210,15 @@ export function parseDeskState(
     backtest: parseBacktest(raw.backtest, fallback.backtest),
     stations: parseStations(raw.stations, fallback.stations),
     source:
-      raw.source === 'engine' || raw.source === 'static' || raw.source === 'mock'
+      raw.source === 'engine' ||
+      raw.source === 'static' ||
+      raw.source === 'mock' ||
+      raw.source === 'file'
         ? raw.source
         : fallback.source,
+    degraded: Array.isArray(raw.degraded)
+      ? raw.degraded.filter((d): d is string => typeof d === 'string')
+      : fallback.degraded,
+    tick: asNumber(raw.tick, fallback.tick ?? 0),
   }
 }
