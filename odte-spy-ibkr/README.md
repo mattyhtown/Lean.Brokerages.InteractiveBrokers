@@ -40,6 +40,7 @@ This software is for education and paper testing only. Options trading involves 
 | `sp_global` | **Stub** | `SP_GLOBAL_ENABLED` + `SP_GLOBAL_API_KEY` |
 | `daloopa` | **Stub** | `DALOOPA_ENABLED` + `DALOOPA_API_KEY` |
 | `perspective` | **Stub** | `PERSPECTIVE_ENABLED` + `PERSPECTIVE_API_KEY` |
+| `macro_news` | **Implemented** | Alpaca news (`GET /v1beta1/news`, uses the Alpaca keys) + tier-1 calendar in `config/macro_events.yaml`; see "Macro news and calendar" |
 
 Enable providers: `PROVIDERS_ENABLED=ibkr,unusual_whales,alpaca,coinbase`
 
@@ -93,34 +94,110 @@ Each chain refresh builds `ChainSkewSnapshot` (`chain/skew.py`):
 - `net_call_bias` ∈ [−1, 1] on `MarketContext`
 - Credit spread selection nets intended position: `MAX_NET_CALL_RISK` cap; auto side prefers put credit when skew is strongly bullish
 
-Live: IB chain → JSON cache under `data/cache/SPY/{date}.json`. Backtest reads the same JSON/parquet layout.
+Live: the first IB chain of each session is saved once to `data/cache/SPY/{date}.parquet` (`.json` without pyarrow) with its capture time. The backtest reads the same layout.
 
 ## Historical backtest
 
 ```bash
 pip install -e ".[dev,backtest]"
-python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --report-json reports/summary.json
-python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --walk-forward --require-rolling-sharpe 1.5
-python -m odte_spy_ibkr.backtest --from 2024-01-01 --to 2025-11-14 --verbose  # no-entry reason histogram
+python -m odte_spy_ibkr.backtest --from 2024-03-01 --to 2025-11-14 --report-json reports/summary.json
+python -m odte_spy_ibkr.backtest --from 2024-03-01 --to 2025-11-14 --require-rolling-sharpe 1.5
+python -m odte_spy_ibkr.backtest --from 2024-03-01 --to 2025-11-14 --walk-forward --require-rolling-sharpe 1.5
+python -m odte_spy_ibkr.backtest --from 2024-03-01 --to 2025-11-14 --verbose  # no-entry reason histogram
 ```
 
-- Rolling Sharpe: 60d window, annualized `sqrt(252)*mean/std` on daily P&amp;L returns
-- Optional live `SHARPE_GATE_ENABLED` pauses new entries when rolling Sharpe &lt; `SHARPE_MIN` (default 1.5)
-- Macro news provider: Alpaca news cache + `config/macro_events.yaml` tier-1 blackout
+`--from` defaults to two years before `--to`, `--to` to yesterday (ET). The process exits **1** when `--require-rolling-sharpe` (or `BACKTEST_REQUIRE_SHARPE_PASS=true`, which uses `BACKTEST_SHARPE_TARGET`) is not met, **0** otherwise.
 
-- Walk-forward: `--walk-forward` scores only the holdout test window (`BACKTEST_WALK_FORWARD_TRAIN_DAYS` / `TEST_DAYS`); improvement evaluator uses the same holdout.
-- Cache: chain bars prefer **parquet** when pandas/pyarrow installed (`data/cache/SPY/{date}.parquet`).
-- Live journal: `data/journal/daily_pnl.jsonl` appended at session roll / shutdown for `SHARPE_GATE_ENABLED`.
+The backtest calls the same `propose_entry` / `manage_open` functions as the live runner (`strategy/interface.py`). It steps through each session every `BACKTEST_DECISION_INTERVAL_MIN` minutes and at each step sees only what was known then: a 1-minute bar is visible once it has closed, a headline from its publish time, a UW snapshot from its capture time, a calendar outcome from its release time.
 
-**UW session collector** (live, requires API key):
+### Data and cache
+
+Sessions are NYSE trading days on which the underlying has a same-day expiry (SPY: daily from 2022-11-15, Mon/Wed/Fri before that). Market holidays are excluded and 13:00 ET early closes shorten the session.
+
+| What | Source | Cache file |
+|------|--------|-----------|
+| Underlying 1-min bars | Alpaca `GET /v2/stocks/{symbol}/bars` | `data/cache/bars/{ticker}/{date}.parquet` |
+| 0DTE option 1-min bars | Alpaca `GET /v1beta1/options/bars`, bounded to that session | `data/cache/{ticker}/{date}.parquet` |
+| Chain snapshot (alternative to option bars) | saved by the live runner, with capture time | `data/cache/{ticker}/{date}.parquet` |
+| Headlines | Alpaca `GET /v1beta1/news` | `data/cache/macro_news/{date}.json` |
+| Macro calendar | `python -m odte_spy_ibkr.macro backfill` | `data/cache/macro_calendar/{year}.json` |
+| UW flow | `python -m odte_spy_ibkr.unusual_whales` | `data/cache/uw/sessions/{date}.jsonl`, `data/cache/uw/{date}.json` |
+
+Files are parquet when pandas/pyarrow are installed (`backtest` extra), JSON otherwise. The cache is read first; Alpaca is called only for a finished session that is not cached, when `ALPACA_API_KEY`/`ALPACA_API_SECRET` are set and `alpaca` is in `PROVIDERS_BACKTEST_ENABLED`. A failed or empty download is not cached, so it is retried on the next run. Alpaca's option history starts in February 2024.
+
+A cache file for a date holds that date's own data only. The backtest never calls Alpaca's option snapshot endpoint (it has no date parameter and returns the current chain). A chain snapshot is accepted only if it carries a capture time inside that session and only contracts expiring that day; anything else is ignored and the session counts as having no chain. To check a cache written by an earlier version:
+
+```bash
+python -m odte_spy_ibkr.backtest.cache_audit            # lists suspect files and why
+python -m odte_spy_ibkr.backtest.cache_audit --purge    # deletes them so they are fetched again
+```
+
+### Chain coverage and what is scored
+
+A session with no chain of its own, or no intraday bars for the underlying, is skipped. It is never filled with another day's chain or with generated prices. The summary and `--report-json` state:
+
+- `chain_coverage`: sessions in the scored window, how many were replayed from their own chain (`own_chain`, by source) and how many have none (`no_chain`, with dates). `scope` is `full_range` or `walk_forward_holdout`.
+- `scored_window`: `from`, `to` and session count of what was scored, and how many simulated sessions fall before and after it.
+- `simulated`: `from`, `to` and session count of the whole simulated range, with its own coverage counts.
+- `sessions_excluded`: sessions of the scored window left out, by reason (`no_chain`, `no_spot_bars`, `session_not_completed`, `uw_cache_missing_skip`, `macro_news_missing_strict`).
+- `gate`: required and achieved rolling Sharpe, `passed`, and next to it `trade_count`, `traded_days`, `scored_days`, `scored_from`, `scored_to`.
+
+With `--walk-forward` only the holdout slice of the last complete fold is scored (`BACKTEST_WALK_FORWARD_TRAIN_DAYS` then `BACKTEST_WALK_FORWARD_TEST_DAYS` sessions, folds counted from the start of the range). Every metric, the chain coverage and the gate then describe that slice. Sessions after the last complete fold are simulated but not scored; `scored_window.simulated_sessions_after` says how many. A holdout shorter than `BACKTEST_ROLLING_WINDOW_DAYS` has no rolling Sharpe, so with the defaults (60-day window, 20-session holdout) a walk-forward run reports it as undefined and fails any Sharpe requirement.
+
+`--allow-synthetic` (off by default) fills sessions that have no real data with generated prices so the pipeline can be exercised without keys. Those sessions are reported in a separate `synthetic` block, are in no metric and never count toward the Sharpe requirement.
+
+### Fills, PnL and Sharpe
+
+- Entry credit = spread mid minus `BACKTEST_SLIPPAGE_TICKS` × $0.01; exit debit = spread mark plus the same slippage, kept within [0, width].
+- Commission = `BACKTEST_COMMISSION_PER_CONTRACT` per contract per leg, on entry and on exit. A spread held to the close settles at intrinsic value with no exit commission.
+- Option marks come from 1-minute trade bars, not quotes: bid/ask are taken as the last trade ∓ `BACKTEST_QUOTE_HALF_SPREAD`, and a mark older than `BACKTEST_MARK_MAX_AGE_MIN` minutes is not used. Deltas are Black-Scholes from those marks. Real quoted spreads on 0DTE wings can be wider than this model assumes.
+- `STOP_LOSS_CREDIT_MULTIPLE` (default 0 = off) stops a spread when its mark reaches that multiple of the entry credit; `MAX_DAILY_LOSS` ends the day.
+- Daily return = day PnL / equity at the start of that day (`BACKTEST_EQUITY_BASE` plus PnL so far). Days without a trade count as zero.
+- Rolling Sharpe = `sqrt(252) * mean / std` over `BACKTEST_ROLLING_WINDOW_DAYS` (60) scored days, population std; undefined when std is 0 or there are fewer days than the window. The requirement is met when the highest rolling value reaches the target. There is no minimum number of trades; read `trade_count` and `traded_days` next to the result.
+
+### Live Sharpe gate and journal
+
+Off by default. With `SHARPE_GATE_ENABLED=true` the live runner pauses new entries while the Sharpe of the last `SHARPE_WINDOW_DAYS` journaled days is below `SHARPE_MIN` (1.5). Open positions are still managed while entries are paused. The gate acts only on a measured shortfall: with fewer journal rows than `SHARPE_MIN_OBS` (or the window), or a window with zero variance, the Sharpe is undefined and entries are not paused.
+
+The runner appends one row per session to `JOURNAL_PATH` (`data/journal/daily_pnl.jsonl`) at the session roll or shutdown. Its PnL is computed from the entry credit and the exit mark, not from broker fills. To load realized PnL from a broker statement instead:
+
+```bash
+python -m odte_spy_ibkr.journal ingest --csv statement.csv --date-col Date --pnl-col "Realized P/L"
+```
+
+For a date that has statement rows, they are used in place of the runner's own row. Re-running the command on the same or an extended statement does not double count.
+
+### Unusual Whales in the backtest
+
+Flow is replayed from disk, never from the live API. Collect it during the session:
 
 ```bash
 python -m odte_spy_ibkr.unusual_whales --once
 ```
 
-Appends `data/cache/uw/sessions/{date}.jsonl` and refreshes `data/cache/uw/{date}.json` for backtest replay.
+This appends `data/cache/uw/sessions/{date}.jsonl` and refreshes `data/cache/uw/{date}.json` (`UW_BACKTEST_CACHE_DIR`). Each snapshot is used from its capture time; a record without one is not replayed. For a session with no UW cache, `UW_BACKTEST_MODE` decides:
 
-**Gaps:** Without Alpaca/UW keys, backtest uses **synthetic** chains (not historical marks); UW history is cache-first.
+| Mode | Effect |
+|------|--------|
+| `neutral` (default) | trade with neutral flow |
+| `skip` | leave the session out of the scored sample |
+| `block` | keep the session as a zero-PnL day with no entries |
+
+### Macro news and calendar
+
+`macro_news` blocks new entries from `MACRO_BLACKOUT_BEFORE_MIN` before to `MACRO_BLACKOUT_AFTER_MIN` after a tier-1 release, and scores headlines of the last `MACRO_HEADLINE_LOOKBACK_MIN` minutes (keyword score; `MACRO_HEADLINE_INTENSITY_BLOCK` blocks, `MACRO_SIZE_SCALE` downsizes). Live and backtest use the same rules.
+
+```bash
+python -m odte_spy_ibkr.macro backfill --year 2024 --source calendar_2024.csv   # .yaml, .json or .csv
+```
+
+writes `data/cache/macro_calendar/2024.json`, which the backtest prefers over `MACRO_CALENDAR_PATH` for that year. The dates in `config/macro_events.yaml` are examples; supply the real release calendar. `MACRO_BACKTEST_MODE=strict` leaves out sessions with no headline data, `permissive` (default) trades them on the calendar alone.
+
+### Data gaps
+
+- No keys and an empty cache means no session has a chain: the run reports zero coverage, zero trades and fails any Sharpe requirement.
+- UW has no historical backfill here; only sessions collected live can be replayed.
+- The Alpaca loaders are tested against mocked responses only.
 
 ## Continuous improvement
 
@@ -135,6 +212,8 @@ Promotion rules (`IMPROVEMENT_AUTO_PROMOTE_PAPER=true` by default; live requires
 - Challenger rolling Sharpe must beat active by `IMPROVEMENT_SHARPE_MARGIN`
 - Must meet `BACKTEST_SHARPE_TARGET` (1.5)
 - Never enables live orders by itself
+
+Each candidate is scored on the walk-forward holdout of the last 120 calendar days, on sessions that have their own chain only. The history file records `best_sample`: the scored `from`/`to`, chain coverage of those sessions, trade count and traded days, and the number of sessions simulated. A candidate with no Sharpe on that sample cannot be promoted; with the default 60-day rolling window and 20-session holdout that is every candidate (see "Chain coverage and what is scored").
 
 ## QuantConnect LEAN
 
