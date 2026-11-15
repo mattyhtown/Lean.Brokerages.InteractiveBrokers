@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+import ipaddress
 import json
 import os
 import re
@@ -43,7 +44,6 @@ def _bedrock_runtime_url(region: str, encoded_model: str) -> str:
     return f"https://{host}/model/{encoded_model}/converse"
 
 
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 _AZURE_OPENAI_ENDPOINT_RE = re.compile(
     r"^https://[a-z0-9][\w.-]*\.(openai\.azure\.com|cognitiveservices\.azure\.com)(/|$)",
     re.IGNORECASE,
@@ -54,12 +54,11 @@ _ANTHROPIC_MCP_BETA = "mcp-client-2025-11-20"
 def _is_loopback_host(hostname: str | None) -> bool:
     if not hostname:
         return False
-    lowered = hostname.lower()
-    if lowered in _LOOPBACK_HOSTS:
-        return True
-    if lowered.startswith("127."):
-        return True
-    return lowered.endswith(".localhost")
+    lowered = hostname.lower().strip("[]")
+    try:
+        return ipaddress.ip_address(lowered).is_loopback
+    except ValueError:
+        return lowered == "localhost" or lowered.endswith(".localhost")
 
 
 def _validate_base_url(url: str, *, allow_http_loopback: bool) -> str:
@@ -326,10 +325,6 @@ def build_wire_request(
         fallback = source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
         if fallback:
             base_url = fallback
-    elif spec.name == "ollama" and not source.get(spec.endpoint_env or "", "").strip():
-        fallback = source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
-        if fallback:
-            base_url = fallback
     if not base_url.strip():
         if spec.endpoint_env:
             raise LLMError(f"Missing {spec.endpoint_env} for provider '{spec.name}'")
@@ -389,6 +384,12 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
                     refusal = item.get("refusal")
                     if isinstance(refusal, str) and refusal.strip():
                         parts.append(f"[refusal: {refusal.strip()}]")
+                if item.get("type") == "mcp_approval_request":
+                    parts.append(
+                        "[mcp approval required: "
+                        f"{item.get('server_label')}.{item.get('name')} "
+                        f"arguments={item.get('arguments')}]"
+                    )
                 content = item.get("content")
                 if isinstance(content, list):
                     for chunk in content:
@@ -526,11 +527,9 @@ def fanout_complete(
     pool = ThreadPoolExecutor(max_workers=max_workers)
     futures = [pool.submit(_call_one, name) for name in providers]
     try:
-        return [future.result() for future in futures]
-    except KeyboardInterrupt:
-        for future in futures:
-            future.cancel()
+        results = [future.result() for future in futures]
+    except BaseException:
         pool.shutdown(wait=False, cancel_futures=True)
         raise
-    else:
-        pool.shutdown(wait=True)
+    pool.shutdown(wait=True)
+    return results

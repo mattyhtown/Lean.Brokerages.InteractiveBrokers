@@ -6,6 +6,7 @@ SUPABASE_MCP_URL = "https://mcp.supabase.com/mcp"
 UNUSUAL_WHALES_MCP_URL = "https://api.unusualwhales.com/api/mcp"
 MONGODB_NPX_PACKAGE = "mongodb-mcp-server@3.3.0"
 UNUSUAL_WHALES_NPX_PACKAGE = "@unusualwhales/mcp@1.2.0"
+SUPABASE_NPX_PACKAGE = "@supabase/mcp-server-supabase@0.17.0"
 
 SUPPORTED_TARGETS: tuple[str, ...] = (
     "cursor",
@@ -55,10 +56,12 @@ def render_mcp_config(target: str) -> str:
     if normalized == "claude-desktop":
         payload = {
             "mcpServers": {
+                # claude_desktop_config.json only launches stdio servers; the hosted
+                # URL is added separately under Settings -> Connectors.
                 "supabase": {
-                    "type": "url",
-                    "url": SUPABASE_MCP_URL,
-                    "headers": {"Authorization": "Bearer YOUR_SUPABASE_ACCESS_TOKEN"},
+                    "command": "npx",
+                    "args": ["-y", SUPABASE_NPX_PACKAGE, "--read-only"],
+                    "env": {"SUPABASE_ACCESS_TOKEN": "YOUR_SUPABASE_ACCESS_TOKEN"},
                 },
                 "unusualwhales": {
                     "command": "npx",
@@ -255,28 +258,22 @@ def render_mcp_config(target: str) -> str:
     payload = {
         "context_servers": {
             "supabase": {
-                "settings": {
-                    "url": SUPABASE_MCP_URL,
-                    "headers": {"Authorization": "Bearer YOUR_SUPABASE_ACCESS_TOKEN"},
-                }
+                "url": SUPABASE_MCP_URL,
+                "headers": {"Authorization": "Bearer YOUR_SUPABASE_ACCESS_TOKEN"},
             },
             "unusualwhales": {
-                "command": {
-                    "path": "npx",
-                    "args": ["-y", UNUSUAL_WHALES_NPX_PACKAGE],
-                    "env": {"UW_API_KEY": "YOUR_UW_API_KEY"},
-                }
+                "command": "npx",
+                "args": ["-y", UNUSUAL_WHALES_NPX_PACKAGE],
+                "env": {"UW_API_KEY": "YOUR_UW_API_KEY"},
             },
             "mongodb": {
-                "command": {
-                    "path": "npx",
-                    "args": ["-y", MONGODB_NPX_PACKAGE],
-                    "env": {
-                        "MDB_MCP_API_CLIENT_ID": "YOUR_ATLAS_CLIENT_ID",
-                        "MDB_MCP_API_CLIENT_SECRET": "YOUR_ATLAS_CLIENT_SECRET",
-                        "MDB_MCP_READ_ONLY": "true",
-                    },
-                }
+                "command": "npx",
+                "args": ["-y", MONGODB_NPX_PACKAGE],
+                "env": {
+                    "MDB_MCP_API_CLIENT_ID": "YOUR_ATLAS_CLIENT_ID",
+                    "MDB_MCP_API_CLIENT_SECRET": "YOUR_ATLAS_CLIENT_SECRET",
+                    "MDB_MCP_READ_ONLY": "true",
+                },
             },
         }
     }

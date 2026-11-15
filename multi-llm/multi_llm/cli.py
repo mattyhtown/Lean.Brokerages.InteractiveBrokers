@@ -6,13 +6,13 @@ import sys
 
 from multi_llm.client import ChatRequest, LLMError, complete, fanout_complete
 from multi_llm.mcp_templates import SUPPORTED_TARGETS, render_mcp_config
-from multi_llm.providers import list_provider_statuses
+from multi_llm.providers import ALL_PROVIDER_NAMES, list_provider_statuses
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="multi-llm",
-        description="Unified multi-LLM CLI (47 registered providers) + MCP config generator",
+        description=f"Unified multi-LLM CLI ({len(ALL_PROVIDER_NAMES)} registered providers) + MCP config generator",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

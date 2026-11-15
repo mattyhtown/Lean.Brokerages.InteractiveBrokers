@@ -185,13 +185,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "writer": _chat("writer", "Writer", "palmyra-x-004", "https://api.writer.com/v1", "WRITER_API_KEY"),
     "reka": _chat("reka", "Reka", "reka-flash", "https://api.reka.ai/v1", "REKA_API_KEY"),
     "ai21": _chat("ai21", "AI21 Labs", "jamba-large", "https://api.ai21.com/studio/v1", "AI21_API_KEY"),
-    "github_models": _chat(
-        "github_models",
-        "GitHub Models",
-        "openai/gpt-4.1",
-        "https://models.inference.ai.azure.com",
-        "GITHUB_TOKEN",
-    ),
     # --- China / Asia-Pacific APIs ---
     "moonshot": _chat(
         "moonshot",
@@ -220,7 +213,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "abab6.5s-chat",
         "https://api.minimax.chat/v1",
         "MINIMAX_API_KEY",
-        "MINIMAX_GROUP_ID",
     ),
     "yi": _chat(
         "yi",
@@ -325,7 +317,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "baseten",
         "Baseten",
         "llama-3.3-70b",
-        "https://model-{MODEL_ID}.api.baseten.co/v1",
+        "",
         "BASETEN_API_KEY",
         endpoint_env="BASETEN_BASE_URL",
     ),
@@ -333,7 +325,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "lepton",
         "Lepton AI",
         "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        "https://<workspace>.lepton.run/api/v1",
+        "",
         "LEPTON_API_KEY",
         endpoint_env="LEPTON_BASE_URL",
     ),
@@ -385,7 +377,6 @@ PROVIDER_ALIASES: dict[str, str] = {
     "hugging_face": "huggingface",
     "nvidia": "nvidia_nim",
     "nim": "nvidia_nim",
-    "github": "github_models",
     "vercel": "vercel_ai_gateway",
     "cloudflare": "cloudflare_ai",
     "watson": "watsonx",
@@ -434,11 +425,7 @@ def is_provider_configured(spec: ProviderSpec, env: Mapping[str, str] | None = N
     if spec.name == "openai_compatible":
         return bool(source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip() or resolve_api_key(spec, source))
     if spec.allow_unauthenticated:
-        return bool(
-            source.get(spec.endpoint_env or "", "").strip()
-            or source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
-            or resolve_api_key(spec, source)
-        )
+        return bool(source.get(spec.endpoint_env or "", "").strip() or resolve_api_key(spec, source))
     return resolve_api_key(spec, source) is not None
 
 

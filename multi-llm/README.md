@@ -9,7 +9,7 @@ Run `poetry run multi-llm providers` (or `--json`) for the live registry, defaul
 | Category | Provider IDs (sample) |
 |----------|----------------------|
 | **Frontier** | `anthropic`, `openai`, `gemini`, `xai`, `cohere` |
-| **US / global inference** | `mistral`, `deepseek`, `groq`, `together`, `fireworks`, `perplexity`, `cerebras`, `openrouter`, `huggingface`, `nvidia_nim`, `sambanova`, `deepinfra`, `anyscale`, `lambda`, `friendli`, `nebius`, `hyperbolic`, `novita`, `writer`, `reka`, `ai21`, `github_models` |
+| **US / global inference** | `mistral`, `deepseek`, `groq`, `together`, `fireworks`, `perplexity`, `cerebras`, `openrouter`, `huggingface`, `nvidia_nim`, `sambanova`, `deepinfra`, `anyscale`, `lambda`, `friendli`, `nebius`, `hyperbolic`, `novita`, `writer`, `reka`, `ai21` |
 | **Asia-Pacific** | `moonshot`, `dashscope`, `zhipu`, `minimax`, `yi`, `baichuan`, `siliconflow`, `tencent_hunyuan` |
 | **Enterprise cloud** | `azure_openai`, `bedrock`, `watsonx`, `vertex_openai`, `databricks`, `snowflake_cortex` |
 | **Gateways & hosting** | `vercel_ai_gateway`, `cloudflare_ai`, `baseten`, `lepton` |

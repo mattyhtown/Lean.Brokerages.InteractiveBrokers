@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import re
+import threading
+
 import pytest
 
 from multi_llm.cli import main as cli_main
@@ -8,6 +12,7 @@ from multi_llm.client import ChatRequest, LLMError, build_wire_request, complete
 from multi_llm.mcp_templates import (
     SUPPORTED_TARGETS,
     SUPABASE_MCP_URL,
+    SUPABASE_NPX_PACKAGE,
     UNUSUAL_WHALES_MCP_URL,
     UNUSUAL_WHALES_NPX_PACKAGE,
     render_mcp_config,
@@ -37,7 +42,6 @@ def test_all_expected_providers_registered() -> None:
         "dashscope",
         "zhipu",
         "nvidia_nim",
-        "github_models",
         "azure_openai",
         "bedrock",
         "openai_compatible",
@@ -288,7 +292,7 @@ def test_mcp_templates_use_official_servers_and_no_shadow_mcps(target: str) -> N
     assert "unusualwhales.com/public-api/mcp" not in rendered
     assert "unusualwhales" in rendered
     assert UNUSUAL_WHALES_MCP_URL in rendered or UNUSUAL_WHALES_NPX_PACKAGE in rendered
-    assert SUPABASE_MCP_URL in rendered
+    assert SUPABASE_MCP_URL in rendered or SUPABASE_NPX_PACKAGE in rendered
 
 
 def test_cli_providers_and_mcp_config(capsys: pytest.CaptureFixture[str]) -> None:
@@ -327,6 +331,125 @@ def test_enterprise_providers_require_custom_base_url() -> None:
             ChatRequest(provider="snowflake_cortex", prompt="Hi"),
             env={"SNOWFLAKE_TOKEN": "sf-test"},
         )
+    with pytest.raises(LLMError, match="BASETEN_BASE_URL"):
+        build_wire_request(
+            ChatRequest(provider="baseten", prompt="Hi"),
+            env={"BASETEN_API_KEY": "bt-test"},
+        )
+    with pytest.raises(LLMError, match="LEPTON_BASE_URL"):
+        build_wire_request(
+            ChatRequest(provider="lepton", prompt="Hi"),
+            env={"LEPTON_API_KEY": "lp-test"},
+        )
+
+
+def test_no_provider_default_url_contains_placeholders() -> None:
+    for spec in PROVIDERS.values():
+        assert not any(token in spec.base_url for token in ("{", "<", "example."))
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.attacker.example/v1",
+        "http://127.0.0.1.attacker.example/v1",
+        "http://localhost.attacker.example/v1",
+        "http://10.0.0.5:8000/v1",
+    ],
+)
+def test_http_is_refused_for_hosts_that_only_look_like_loopback(base_url: str) -> None:
+    with pytest.raises(LLMError, match="Refusing HTTP provider URL"):
+        build_wire_request(
+            ChatRequest(provider="openai_compatible", prompt="Hi"),
+            env={"OPENAI_COMPATIBLE_BASE_URL": base_url, "OPENAI_COMPATIBLE_API_KEY": "secret"},
+        )
+
+
+@pytest.mark.parametrize("base_url", ["http://127.0.0.2:8000/v1", "http://[::1]:8000/v1", "http://localhost:8000/v1"])
+def test_http_is_allowed_for_real_loopback(base_url: str) -> None:
+    _, url, _, _, _ = build_wire_request(
+        ChatRequest(provider="openai_compatible", prompt="Hi"),
+        env={"OPENAI_COMPATIBLE_BASE_URL": base_url},
+    )
+    assert url == f"{base_url}/chat/completions"
+
+
+def test_ollama_ignores_openai_compatible_base_url() -> None:
+    env = {"OPENAI_COMPATIBLE_BASE_URL": "https://paid.example.test/v1"}
+    _, url, _, _, _ = build_wire_request(ChatRequest(provider="ollama", prompt="Hi"), env=env)
+    assert url == "http://127.0.0.1:11434/v1/chat/completions"
+
+
+def test_minimax_group_id_is_not_an_api_key() -> None:
+    env = {"MINIMAX_GROUP_ID": "group-123"}
+    by_name = {row["provider"]: row for row in list_provider_statuses(env=env)}
+    assert by_name["minimax"]["configured"] is False
+    with pytest.raises(LLMError, match="MINIMAX_API_KEY"):
+        build_wire_request(ChatRequest(provider="minimax", prompt="Hi"), env=env)
+
+
+def test_openai_mcp_approval_request_is_surfaced() -> None:
+    def fake_transport(_u: str, _h: dict[str, str], _b: dict[str, object], _t: int) -> dict[str, object]:
+        return {
+            "model": "gpt-4.1",
+            "output": [
+                {
+                    "type": "mcp_approval_request",
+                    "server_label": "unusualwhales",
+                    "name": "get_flow",
+                    "arguments": '{"ticker":"SPY"}',
+                }
+            ],
+        }
+
+    resp = complete(
+        ChatRequest(provider="openai", prompt="Flow?", attach_mcp=("uw",)),
+        env={"OPENAI_API_KEY": "sk-test", "UW_API_KEY": "uw-test"},
+        transport=fake_transport,
+    )
+    assert "mcp approval required: unusualwhales.get_flow" in resp.text
+
+
+def test_fanout_shuts_down_its_thread_pool() -> None:
+    before = {t.ident for t in threading.enumerate()}
+
+    def fake_transport(_u: str, _h: dict[str, str], _b: dict[str, object], _t: int) -> dict[str, object]:
+        return {"model": "grok-4", "choices": [{"message": {"content": "ok"}}]}
+
+    fanout_complete(providers=["xai"], prompt="Hi", env={"XAI_API_KEY": "x"}, transport=fake_transport)
+    assert {t.ident for t in threading.enumerate() if t.is_alive()} <= before
+
+
+def test_claude_desktop_and_zed_templates_match_client_schemas() -> None:
+    desktop = json.loads(render_mcp_config("claude-desktop"))["mcpServers"]
+    for server in desktop.values():
+        assert server["command"] == "npx"
+        assert "url" not in server and "type" not in server
+
+    zed = json.loads(render_mcp_config("zed"))["context_servers"]
+    assert zed["supabase"]["url"] == SUPABASE_MCP_URL
+    assert set(zed["supabase"]) == {"url", "headers"}
+    for name in ("unusualwhales", "mongodb"):
+        assert zed[name]["command"] == "npx"
+        assert isinstance(zed[name]["args"], list)
+
+
+def test_committed_examples_pin_npx_packages() -> None:
+    cursor_dir = Path(__file__).resolve().parents[2] / ".cursor"
+    npx_package = re.compile(r"""-y["',\s]+([@\w./-]+?)(@[\w.-]+)?["'\s\]]""")
+    checked = 0
+    offenders = []
+    for path in cursor_dir.rglob("*"):
+        if not path.is_file() or path.suffix not in (".example", ".md"):
+            continue
+        for line in path.read_text().splitlines():
+            for match in npx_package.finditer(line + " "):
+                checked += 1
+                version = match.group(2) or ""
+                if not re.fullmatch(r"@\d+\.\d+\.\d+", version):
+                    offenders.append(f"{path.relative_to(cursor_dir)}: {line.strip()}")
+    assert checked >= 8
+    assert offenders == []
 
 
 def test_huggingface_and_openai_compatible_endpoints() -> None:
