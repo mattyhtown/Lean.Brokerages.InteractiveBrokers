@@ -1,0 +1,27 @@
+# OpenAI Codex CLI / Desktop (~/.codex/config.toml)
+# Merge into ~/.codex/config.toml (chmod 600). Never commit real secrets.
+
+[mcp_servers.supabase]
+url = "https://mcp.supabase.com/mcp"
+
+[mcp_servers.unusualwhales]
+url = "https://api.unusualwhales.com/api/mcp"
+bearer_token_env_var = "UW_API_KEY"
+
+[mcp_servers.mongodb]
+command = "npx"
+args = ["-y", "mongodb-mcp-server@3.3.0"]
+
+[mcp_servers.mongodb.env]
+MDB_MCP_API_CLIENT_ID = "YOUR_ATLAS_CLIENT_ID"
+MDB_MCP_API_CLIENT_SECRET = "YOUR_ATLAS_CLIENT_SECRET"
+MDB_MCP_READ_ONLY = "true"
+
+# Community server (NimbleMarkets/dbn-go), metadata only: no tool incurs Databento billing.
+[mcp_servers.databento]
+command = "dbn-go-mcp-meta"
+
+[mcp_servers.databento.env]
+DATABENTO_API_KEY = "YOUR_DATABENTO_API_KEY"
+
+# Theta Data is not listed: Theta Terminal serves MCP over SSE only, which Codex does not support.

@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "qc-multi-llm"
+version = "0.1.0"
+description = "Unified multi-LLM router and MCP config generator for Anthropic, OpenAI, Gemini, xAI, and all major cloud/local LLMs"
+authors = ["QuantConnect IB Workspace Contributors"]
+readme = "README.md"
+packages = [{ include = "multi_llm" }]
+
+[tool.poetry.scripts]
+multi-llm = "multi_llm.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
