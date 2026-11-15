@@ -6,6 +6,14 @@ from odte_spy_ibkr.config import Settings
 from odte_spy_ibkr.ib_client import IBSession
 
 
+def test_default_settings_disallow_orders():
+    settings = Settings()
+    assert settings.enable_orders is False
+    assert settings.read_only is True
+    assert settings.live_trading is False
+    assert settings.orders_allowed is False
+
+
 def test_place_combo_blocked_when_orders_disabled():
     settings = Settings(ENABLE_ORDERS=False, READ_ONLY=True, PAPER=True, LIVE_TRADING=False)
     session = IBSession(settings)

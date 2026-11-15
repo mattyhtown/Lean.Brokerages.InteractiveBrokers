@@ -52,6 +52,8 @@ def evaluate_candidate(candidate: ExperimentCandidate, *, end: date | None = Non
         from odte_spy_ibkr.backtest.spot_loader import load_spot_for_day
 
         spot = load_spot_for_day(settings, ticker=settings.underlying, day=day)
+        if spot is None:
+            continue
         chain = load_chain_for_day(settings, ticker=settings.underlying, day=day, spot=spot)
         sim = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
         open_pos = sim.open_position

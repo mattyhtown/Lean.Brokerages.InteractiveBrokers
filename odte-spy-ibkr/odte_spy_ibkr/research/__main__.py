@@ -8,7 +8,7 @@ from pathlib import Path
 from odte_spy_ibkr.config import load_settings
 from odte_spy_ibkr.logging_utils import setup_logging
 from odte_spy_ibkr.research.evaluate import report_markdown, run_research
-from odte_spy_ibkr.research.ingest import log_credential_status, run_ingest
+from odte_spy_ibkr.research.ingest import log_credential_status, resolve_ingest_sources, run_ingest
 
 
 def main() -> None:
@@ -26,12 +26,11 @@ def main() -> None:
             "thetadata",
             "tradingeconomics",
             "quantconnect",
+            "openbb",
             "all",
         ],
-        # argparse appends to a list default, so ["alpaca"] here would run
-        # alpaca on every ingest. The default is applied after parsing.
         default=None,
-        help="Repeat for multiple sources; default alpaca only",
+        help="Repeat for multiple sources; omit for alpaca only",
     )
     ing.add_argument("--start", type=date.fromisoformat, default=None)
     ing.add_argument("--end", type=date.fromisoformat, default=None)
@@ -48,7 +47,12 @@ def main() -> None:
     if args.cmd == "ingest":
         end = args.end or date.today()
         start = args.start or (end - timedelta(days=args.days))
-        paths = run_ingest(settings, sources=args.source or ["alpaca"], start=start, end=end)
+        paths = run_ingest(
+            settings,
+            sources=resolve_ingest_sources(args.source),
+            start=start,
+            end=end,
+        )
         print(json.dumps(paths, indent=2))
         return
     if args.cmd == "evaluate":
