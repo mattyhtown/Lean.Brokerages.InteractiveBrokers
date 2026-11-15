@@ -1,6 +1,6 @@
 # research-data
 
-Builds the training dataset for a signal model that predicts forward equity returns: Substack newsletters from Gmail, daily news digests from Perplexity, headlines from Benzinga, podcast transcripts, FinBERT sentiment on all four, Alpha Vantage's own news sentiment scores, daily options metrics from ORATS, daily prices from Databento, split and dividend factors from QuantConnect, and the San Francisco Fed's daily news sentiment index through OpenBB, all stored in Supabase.
+Builds the training dataset for a signal model that predicts forward equity returns: Substack newsletters from Gmail, daily news digests from Perplexity, headlines from Benzinga, podcast transcripts, FinBERT sentiment on all four, Alpha Vantage's own news sentiment scores, daily options metrics from ORATS, daily prices from Databento, split and dividend factors from QuantConnect, and the San Francisco Fed's daily news sentiment index through OpenBB, all stored in Supabase. It also retrains the model on that dataset, tests it on days it was not trained on, and keeps the scores and predictions in Supabase.
 
 ## What it loads
 
@@ -16,6 +16,7 @@ Builds the training dataset for a signal model that predicts forward equity retu
 | `options` | ORATS end-of-day core data for the same symbols, one trade date at a time | `options_daily` |
 | `adjustments` | QuantConnect's split and dividend factor files for the same symbols, from a LEAN data folder on this machine | `price_adjustments` |
 | `openbb` | The San Francisco Fed Daily News Sentiment Index, fetched through OpenBB | `market_news_sentiment` (one row per calendar day) |
+| `train` | `training_rows` and the predictions stored by earlier runs | `model_runs` (one row per retrain and horizon, with its scores) and `model_predictions` (one row per symbol, day and horizon) |
 
 The `training_rows` view joins them into one row per ticker and trading day:
 
@@ -31,11 +32,11 @@ The `training_rows` view joins them into one row per ticker and trading day:
 | `close` | Databento |
 | `forward_return_1d`, `forward_return_5d`, `returns_adjusted` | Databento closes, adjusted with QuantConnect's factors |
 
-Every step can be run again over the same dates without creating duplicates.
+Every loading step can be run again over the same dates without creating duplicates. `train` adds a `model_runs` row each time it runs and never changes a stored prediction.
 
 ## Setup
 
-1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project that already has the earlier files only needs the ones added since; `006_podcasts.sql` is the newest.
+1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project that already has the earlier files only needs the ones added since; `007_model.sql` is the newest.
 2. Edit `watchlist.txt` to the symbols and company names you want to track.
 3. To load podcasts, add their feed addresses to `podcasts.txt`. It ships with none. See [Podcasts](#podcasts).
 4. Set these environment variables:
@@ -76,6 +77,37 @@ poetry run research-data options --start 2025-10-01
 News cannot be backfilled: a digest is what Perplexity found at the moment it was asked, so `news` only ever collects today's. Run it every day you want covered, at about the same time. A second run on the same New York calendar day skips the symbols that already have a digest.
 
 `score` saves each result as it arrives, so a run that stops partway resumes from the next unscored passage. A Benzinga backfill adds one passage per headline and symbol, which can be far more than the default `--limit` of 1000.
+
+## Training the model
+
+```bash
+poetry install --extras train
+poetry run research-data train
+```
+
+`train` fits two models on `training_rows`, one for the return over the next trading day and one for the next 5, and takes a few seconds. Each is a set of gradient-boosted trees (scikit-learn's `HistGradientBoostingRegressor`) with fixed settings. Its inputs are every column of `training_rows` except the symbol, the date, the raw close and the returns; a column that is empty in every row it trains on, such as a source that is not loaded yet, is left out. Nothing is saved to disk: the model is fitted again from the table on every run, so new rows and new columns are picked up without any other step.
+
+**The test on days it was not trained on.** Before anything is stored, the model is walked forward through the history. It is trained on the first 60 sessions whose return was already known, predicts the next 20 sessions, is trained again on everything known by then, predicts the next 20, and so on. A return over 5 days is only known 5 sessions later, so the model that predicts a block never trains on a return that ends after the block's first day. This needs 81 sessions of closes for the 1-day model and 89 for the 5-day one; with fewer, `train` says so and stores nothing for that model.
+
+**What is stored.** Each run adds one row per model to `model_runs`. The `oos_` columns are the walk-forward test and the `live_` columns are the same measures over the stored predictions whose return has since become known:
+
+| Column | Meaning |
+|---|---|
+| `rank_ic` | Each day, the rank correlation across symbols between the predictions and the returns that followed, averaged over days. 0 is no skill, 1 is a perfect ordering. Only days with 5 or more symbols count. |
+| `rank_ic_t` | `rank_ic` against how much it varies from day to day. 5-day returns overlap, so their days count for a fifth. |
+| `hit_rate`, `baseline_hit_rate` | The share of predictions with the sign of the return, and the same for always predicting the average return of the rows trained on. |
+| `r2_vs_baseline` | 1 minus the model's squared error divided by that of always predicting that average. Above 0 beats it, below 0 is worse than it. |
+| `top_minus_bottom` | Each day, the return of the third of symbols predicted highest minus the third predicted lowest, averaged over days. |
+
+To see whether it improves as rows accumulate:
+
+```sql
+select trained_at, horizon_days, training_rows, oos_rank_ic, oos_r2_vs_baseline,
+       live_predictions, live_rank_ic, live_hit_rate
+from model_runs order by horizon_days, trained_at;
+```
+
+**Predictions.** After the test, the model is trained on every row with a known return and predicts the newest session, the one whose return nobody knows yet. Those rows go to `model_predictions` and are never changed: a second run for the same session keeps the first prediction. `model_prediction_outcomes` shows each prediction next to the return that followed, null until the later close is loaded. Only the newest session is predicted, so a day on which `train` did not run has no prediction.
 
 ## Podcasts
 
@@ -147,7 +179,12 @@ It also works with `all`. The extra installs PyTorch and Transformers, about 5 G
 
 ## Limits to know before training
 
-- A row with `returns_adjusted` false may have a split or dividend inside its returns that was not removed. That covers every row until `adjustments` has run, symbols QuantConnect has no factor file for, and the newest days until newer factor files are loaded. Train on the rows where it is true.
+- A row with `returns_adjusted` false may have a split or dividend inside its returns that was not removed. That covers every row until `adjustments` has run, symbols QuantConnect has no factor file for, and the newest days until newer factor files are loaded. `train` uses those rows too, because without the factor files there would be nothing else to train on, and says how many there are. For fitting, returns beyond the 1st and 99th percentile are pulled in to those percentiles, which keeps an unremoved split from deciding the fit; the scores use the returns as they are, so an unremoved split does distort `r2_vs_baseline` and `top_minus_bottom`.
+- A prediction is made after the close its return starts from. The 1-day return it predicts runs from that close to the next, so the part of it that happens before the next open has already passed by the time a morning run stores the prediction. The scores take no account of trading costs.
+- Seven symbols are few. A day's rank correlation across 7 symbols is noisy, and a good score over a few months of them can be luck: with returns that no feature explained, 2 of 20 simulated one-year histories still showed a 1-day `rank_ic_t` beyond 2.
+- Text history starts when each source was first loaded. Prices and options can be backfilled for years, but on those older rows the newsletter, news and podcast columns are empty, so the model cannot learn from text until months of it have accumulated.
+- The model's settings were chosen once and not tuned on this data. The walk-forward test retrains every 20 sessions, while a daily schedule retrains every day.
+- `train` was checked on made-up histories, not on real loaded data: the hosted tables were empty when it was written.
 - Factors are matched by today's ticker. A company that changed its ticker has no factors under the old one.
 - Text counts only on a row of its own symbol. When the symbol has no bar on the trading day its text falls on, that text is not counted on any row.
 - On early-close days (13:00 New York), text that arrives between 13:00 and 16:00 is paired with that day's close even though the close has already happened.
@@ -174,4 +211,4 @@ It also works with `all`. The extra installs PyTorch and Transformers, about 5 G
 poetry run pytest
 ```
 
-With the `local` extra installed, one test also loads the real model and scores three sentences with it. With the `openbb` extra installed, one test also downloads the real index. With the `podcasts` extra installed, one test also loads the real Whisper model.
+With the `local` extra installed, one test also loads the real model and scores three sentences with it. With the `openbb` extra installed, one test also downloads the real index. With the `podcasts` extra installed, one test also loads the real Whisper model. With the `train` extra installed, three tests also train the real scikit-learn model.
