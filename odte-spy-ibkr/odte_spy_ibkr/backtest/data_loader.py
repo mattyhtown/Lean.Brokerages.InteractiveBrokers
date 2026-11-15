@@ -9,6 +9,8 @@ import httpx
 
 from odte_spy_ibkr.chain import OptionCandidate, today_expiry
 from odte_spy_ibkr.config import Settings
+from odte_spy_ibkr.research.chain_io import load_chain_rows, rows_to_candidates
+from odte_spy_ibkr.research.paths import CHAIN_ROOT
 
 
 def _cache_path(settings: Settings, ticker: str, day: date) -> Path:
@@ -22,6 +24,11 @@ def load_chain_for_day(
     day: date,
     spot: float | None = None,
 ) -> list[OptionCandidate]:
+    if ticker.upper() == settings.underlying.upper():
+        research_rows = load_chain_rows(day, snapshot="signal", root=CHAIN_ROOT)
+        if research_rows:
+            return rows_to_candidates(research_rows, day)
+
     path = _cache_path(settings, ticker, day)
     json_fallback = path.with_suffix(".json")
     if json_fallback.is_file():

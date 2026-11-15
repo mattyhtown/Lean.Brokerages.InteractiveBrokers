@@ -6,11 +6,18 @@ from datetime import date
 from pathlib import Path
 
 from odte_spy_ibkr.config import Settings, load_settings
-from odte_spy_ibkr.research.alpaca_ingest import RESEARCH_ROOT, load_daily_bars, load_minute_bars
+from odte_spy_ibkr.research.alpaca_ingest import RESEARCH_ROOT, load_daily_bars
+from odte_spy_ibkr.research.minute_io import best_minute_root, load_minute_bars, minute_coverage
 from odte_spy_ibkr.research.chain_io import load_chain_rows, rows_to_candidates
 from odte_spy_ibkr.research.features import FeatureRow, compute_features_for_day
 from odte_spy_ibkr.research.labels import LabelRow, modeled_spread_pnl_from_marks, spy_return_to_close
 from odte_spy_ibkr.research.paths import UW_ROOT
+from odte_spy_ibkr.research.holdout import (
+    FEATURE_HYPOTHESES_PER_RUN,
+    RUN1_HYPOTHESES_TESTED,
+    run2_holdout_days,
+    run2_train_days,
+)
 from odte_spy_ibkr.research.stats import FeatureTestResult, bonferroni_adjust, evaluate_feature
 from odte_spy_ibkr.strategy.credit_spread import choose_short_leg
 
@@ -28,6 +35,7 @@ FEATURE_COLS = [
     "intraday_mom_to_signal",
     "realized_vol_opening_hour",
     "macro_minutes_to_tier1",
+    "macro_tier1_surprise",
 ]
 
 
@@ -47,13 +55,15 @@ class ResearchReport:
     notes: list[str]
 
 
-def _require_real_minute_coverage(days: list[date], cache_dir: Path) -> None:
-    missing = [d for d in days if not (cache_dir / "minute" / f"{d.isoformat()}.json").is_file()]
+def _require_real_minute_coverage(days: list[date], cache_dir: Path | None = None) -> Path:
+    n_ok, missing = minute_coverage(days)
     if len(missing) > len(days) * 0.25:
         raise RuntimeError(
-            f"Insufficient real minute-bar cache: missing {len(missing)}/{len(days)} sessions under {cache_dir / 'minute'}. "
-            "Run `python -m odte_spy_ibkr.research ingest` with Alpaca keys or bootstrap from MCP exports."
+            f"Insufficient real minute-bar cache: missing {len(missing)}/{len(days)} sessions "
+            f"(alpaca/quantconnect/ibkr research trees). "
+            "Run `python -m odte_spy_ibkr.research ingest` with Alpaca, QuantConnect LEAN, or IBKR."
         )
+    return cache_dir or best_minute_root(days)
 
 
 def _load_uw_flow_strength(day: date) -> float | None:
@@ -103,16 +113,22 @@ def _spread_pnl(
 
 
 def build_dataset(settings: Settings, *, days: list[date]) -> list[ResearchRow]:
-    cache_dir = Path(settings.backtest_cache_dir).parent / "research" / "alpaca"
+    cache_dir = _require_real_minute_coverage(days)
     if not (cache_dir / "spy_daily.json").is_file():
-        cache_dir = RESEARCH_ROOT
-    _require_real_minute_coverage(days, cache_dir)
-    daily = {date.fromisoformat(b["t"][:10]): float(b["c"]) for b in load_daily_bars(cache_dir)}
+        for fallback in (RESEARCH_ROOT, cache_dir):
+            if (fallback / "spy_daily.json").is_file():
+                daily_src = fallback
+                break
+        else:
+            daily_src = cache_dir
+    else:
+        daily_src = cache_dir
+    daily = {date.fromisoformat(b["t"][:10]): float(b["c"]) for b in load_daily_bars(daily_src)}
     rows: list[ResearchRow] = []
     prev_close: float | None = None
     ordered = sorted(days)
     for day in ordered:
-        minute = load_minute_bars(day, cache_dir)
+        minute = load_minute_bars(day)
         if not minute:
             prev_close = daily.get(day, prev_close)
             continue
@@ -135,6 +151,7 @@ def build_dataset(settings: Settings, *, days: list[date]) -> list[ResearchRow]:
             intraday_mom_to_signal=feats.intraday_mom_to_signal,
             realized_vol_opening_hour=feats.realized_vol_opening_hour,
             macro_minutes_to_tier1=feats.macro_minutes_to_tier1,
+            macro_tier1_surprise=feats.macro_tier1_surprise,
             uw_flow_strength=uw_strength,
         )
         from odte_spy_ibkr.research.features import SIGNAL_TIME, _price_at
@@ -158,25 +175,39 @@ def build_dataset(settings: Settings, *, days: list[date]) -> list[ResearchRow]:
 def run_research(
     settings: Settings | None = None,
     *,
-    holdout_days: int = 20,
+    holdout_days: int | None = None,
+    run: int = 2,
 ) -> ResearchReport:
     settings = settings or load_settings()
     cache_dir = RESEARCH_ROOT
     daily = load_daily_bars(cache_dir)
     days = sorted(date.fromisoformat(b["t"][:10]) for b in daily)
-    if len(days) <= holdout_days + 30:
-        notes = [f"Short calendar: {len(days)} trading days in daily cache."]
+    if run == 2:
+        holdout = run2_holdout_days(days[0], days[-1])
+        train = run2_train_days(days)
+        notes = [
+            f"Run-2 holdout fixed a priori: {holdout[0].isoformat() if holdout else '?'} "
+            f"through {holdout[-1].isoformat() if holdout else '?'} "
+            f"({len(holdout)} sessions); run-1 tail holdout not reused.",
+        ]
+        hypotheses_tested = RUN1_HYPOTHESES_TESTED + FEATURE_HYPOTHESES_PER_RUN
     else:
-        notes = []
+        tail = holdout_days if holdout_days is not None else 8
+        if len(days) <= tail + 30:
+            notes = [f"Short calendar: {len(days)} trading days in daily cache."]
+        else:
+            notes = []
+        holdout = days[-tail:]
+        train = days[: -tail]
+        hypotheses_tested = len(FEATURE_COLS)
     uw_days = sum(1 for p in (UW_ROOT / "daily").glob("*.json")) if (UW_ROOT / "daily").is_dir() else 0
     if uw_days:
         notes.append(f"UW flow cache: {uw_days} daily files under data/research/uw/daily/")
     else:
         notes.append("UW flow: untested (no historical UW research cache; uw_flow_strength left null).")
-    notes.append("net_call_bias / spread P&L: require data/research/chains/SPY/{{date}}.json from ORATS, UW, or IBKR ingest.")
+    chain_days = sum(1 for _ in (Path("data/research/chains/SPY").glob("*.json")) if _.name != "_ingest_summary.json")
+    notes.append(f"Unified 0DTE chain cache: {chain_days} session files under data/research/chains/SPY/.")
 
-    holdout = days[-holdout_days:]
-    train = days[: -holdout_days]
     full = build_dataset(settings, days=days)
     train_rows = [r for r in full if r.feature.day in train]
     hold_rows = [r for r in full if r.feature.day in holdout]
@@ -201,7 +232,8 @@ def run_research(
         hold_results.append(evaluate_feature(f"{col}_holdout", list(xs_h), list(ys_h)))
 
     pvals = [r.p_value_approx for r in results]
-    adj = bonferroni_adjust(pvals)
+    bonferroni_m = hypotheses_tested if run == 2 else len(FEATURE_COLS)
+    adj = bonferroni_adjust(pvals, family_size=bonferroni_m)
     survivors = [
         hold
         for train, hold, p_adj in zip(results, hold_results, adj, strict=False)
@@ -221,7 +253,7 @@ def run_research(
         data_start=days[0].isoformat() if days else None,
         data_end=days[-1].isoformat() if days else None,
         n_sessions=len(full),
-        hypotheses_tested=len(FEATURE_COLS),
+        hypotheses_tested=hypotheses_tested,
         train_n=len(train_rows),
         holdout_n=len(hold_rows),
         features=results,
@@ -239,7 +271,7 @@ def report_markdown(rep: ResearchReport) -> str:
         "",
         f"**Data range:** {rep.data_start} → {rep.data_end} ({rep.n_sessions} sessions with minute bars)",
         f"**Train / holdout:** {rep.train_n} / {rep.holdout_n} (holdout untouched until final tests)",
-        f"**Hypotheses tested:** {rep.hypotheses_tested} (Bonferroni α={rep.bonferroni_alpha})",
+        f"**Hypotheses tested (cumulative):** {rep.hypotheses_tested} (Bonferroni α={rep.bonferroni_alpha})",
         "",
         "## Notes",
     ]

@@ -18,7 +18,16 @@ def main() -> None:
     ing.add_argument(
         "--source",
         action="append",
-        choices=["alpaca", "uw", "ibkr", "orats", "all"],
+        choices=[
+            "alpaca",
+            "uw",
+            "ibkr",
+            "orats",
+            "thetadata",
+            "tradingeconomics",
+            "quantconnect",
+            "all",
+        ],
         default=["alpaca"],
         help="Repeat for multiple sources; default alpaca only",
     )
@@ -26,7 +35,8 @@ def main() -> None:
     ing.add_argument("--end", type=date.fromisoformat, default=None)
     ing.add_argument("--days", type=int, default=120, help="Lookback when --start omitted")
     ev = sub.add_parser("evaluate", help="Walk-forward feature IC with final holdout")
-    ev.add_argument("--holdout-days", type=int, default=20)
+    ev.add_argument("--holdout-days", type=int, default=None, help="Run-1 tail holdout size (ignored when --run 2)")
+    ev.add_argument("--run", type=int, default=2, choices=(1, 2), help="2 = fixed Oct 1–14 holdout + cumulative Bonferroni")
     ev.add_argument("--report", default="")
     args = parser.parse_args()
     settings = load_settings()
@@ -40,7 +50,7 @@ def main() -> None:
         print(json.dumps(paths, indent=2))
         return
     if args.cmd == "evaluate":
-        rep = run_research(settings, holdout_days=args.holdout_days)
+        rep = run_research(settings, holdout_days=args.holdout_days, run=args.run)
         md = report_markdown(rep)
         if args.report:
             Path(args.report).write_text(md, encoding="utf-8")

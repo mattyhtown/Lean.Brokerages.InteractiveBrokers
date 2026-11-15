@@ -114,6 +114,35 @@ class Settings(BaseSettings):
     orats_api_key: str = Field(default="", alias="ORATS_API_KEY")
     orats_use_delayed_intraday: bool = Field(default=False, alias="ORATS_USE_DELAYED_INTRADAY")
 
+    # Theta Data (local Theta Terminal v3 loopback; credentials used at terminal launch)
+    thetadata_username: str = Field(default="", alias="THETADATA_USERNAME")
+    thetadata_password: str = Field(default="", alias="THETADATA_PASSWORD")
+    thetadata_terminal_url: str = Field(default="http://127.0.0.1:25503", alias="THETADATA_TERMINAL_URL")
+    thetadata_strike_range: int = Field(default=15, alias="THETADATA_STRIKE_RANGE")
+
+    # Trading Economics economic calendar
+    trading_economics_api_key: str = Field(default="", alias="TRADING_ECONOMICS_API_KEY")
+
+    # QuantConnect (LEAN CLI Dataset Market + REST authenticate)
+    quantconnect_user_id: str = Field(default="", alias="QUANTCONNECT_USER_ID")
+    quantconnect_api_token: str = Field(default="", alias="QUANTCONNECT_API_TOKEN")
+    quantconnect_api_base: str = Field(default="https://www.quantconnect.com/api/v2", alias="QUANTCONNECT_API_BASE")
+    quantconnect_lean_data_dir: str = Field(
+        default="data/quantconnect/lean",
+        alias="QUANTCONNECT_LEAN_DATA_DIR",
+    )
+    quantconnect_lean_workspace: str = Field(
+        default="",
+        alias="QUANTCONNECT_LEAN_WORKSPACE",
+        description="Directory containing lean.json for `lean data download` (optional).",
+    )
+    quantconnect_allow_paid_download: bool = Field(
+        default=False,
+        alias="QUANTCONNECT_ALLOW_PAID_DOWNLOAD",
+    )
+    quantconnect_equity_dataset: str = Field(default="US Equities", alias="QUANTCONNECT_EQUITY_DATASET")
+    quantconnect_option_dataset: str = Field(default="US Equity Options", alias="QUANTCONNECT_OPTION_DATASET")
+
     # Coinbase macro overlay (public stats; keys optional for future private endpoints)
     coinbase_api_key: str = Field(default="", alias="COINBASE_API_KEY")
     coinbase_api_secret: str = Field(default="", alias="COINBASE_API_SECRET")

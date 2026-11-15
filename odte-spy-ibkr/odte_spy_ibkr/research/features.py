@@ -9,6 +9,7 @@ from odte_spy_ibkr.chain import build_chain_skew
 from odte_spy_ibkr.chain.legs import OptionCandidate
 from odte_spy_ibkr.config import Settings
 from odte_spy_ibkr.providers.macro_news import load_macro_calendar_for_year
+from odte_spy_ibkr.research.macro_surprise import macro_tier1_surprise_before_signal
 
 ET = ZoneInfo("America/New_York")
 SIGNAL_TIME = time(11, 0)
@@ -24,6 +25,7 @@ class FeatureRow:
     intraday_mom_to_signal: float | None
     realized_vol_opening_hour: float | None
     macro_minutes_to_tier1: float | None
+    macro_tier1_surprise: float | None
     uw_flow_strength: float | None  # None = untested / no cache
 
 
@@ -106,6 +108,7 @@ def compute_features_for_day(
         net_bias = skew.net_call_bias
     signal_at = datetime.combine(day, SIGNAL_TIME, tzinfo=ET)
     macro_mins = macro_minutes_to_release(settings, day, signal_at=signal_at)
+    macro_surprise = macro_tier1_surprise_before_signal(settings, day, signal_at=signal_at)
     return FeatureRow(
         day=day,
         net_call_bias=net_bias,
@@ -114,5 +117,6 @@ def compute_features_for_day(
         intraday_mom_to_signal=intraday_mom,
         realized_vol_opening_hour=rv,
         macro_minutes_to_tier1=macro_mins,
+        macro_tier1_surprise=macro_surprise,
         uw_flow_strength=None,
     )

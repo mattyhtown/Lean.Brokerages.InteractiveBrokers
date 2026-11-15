@@ -132,15 +132,22 @@ python -m odte_spy_ibkr.research ingest --source alpaca --start 2026-07-01 --end
 python -m odte_spy_ibkr.research ingest --source uw     # needs UNUSUAL_WHALES_API_KEY
 python -m odte_spy_ibkr.research ingest --source orats  # needs ORATS_API_TOKEN
 python -m odte_spy_ibkr.research ingest --source ibkr   # needs TWS/Gateway on IB_HOST:IB_PORT, READ_ONLY=true
-python -m odte_spy_ibkr.research evaluate --holdout-days 20
+python -m odte_spy_ibkr.research ingest --source thetadata        # needs THETADATA_* + local Theta Terminal v3
+python -m odte_spy_ibkr.research ingest --source tradingeconomics # needs TRADING_ECONOMICS_API_KEY
+python -m odte_spy_ibkr.research ingest --source quantconnect      # needs QC creds + local LEAN data or CLI
+python -m odte_spy_ibkr.research evaluate --run 2
 ```
 
 - **Alpaca:** SPY minutes + daily summary.
 - **Unusual Whales:** `flow-per-strike?date=` + `option-chains?date=&greeks=true` (historical); `flow-recent` is live-only per UW docs.
 - **ORATS:** `GET /datav2/historical/one-minute/strikes/chain` (CSV, EST `tradeDate`); does not provide equity OHLC — pair with Alpaca/IBKR for SPY bars.
 - **IBKR:** `reqHistoricalData` read-only; ~11s pacing between option requests.
+- **Theta Data:** `GET http://127.0.0.1:25503/v3/option/history/quote` for 0DTE NBBO (requires **Theta Terminal** running locally with `THETADATA_USERNAME` / `THETADATA_PASSWORD` at launch — loopback HTTP has no per-request auth). Writes unified `chains/SPY/{date}.json`; backtest loader reads that cache first.
+- **Trading Economics:** `GET /calendar/country/united%20states/{start}/{end}?c=KEY&values=true` — actual/forecast/previous + numeric surprise; feeds `data/research/tradingeconomics/` and mirrors tier-1/2 rows into `data/cache/macro_calendar/`. New research feature: `macro_tier1_surprise` (actual − forecast for tier-1 releases before 11:00 ET, no lookahead).
 
-Neither UW, IBKR, nor ORATS ingest was executed against live services in the cloud agent environment (mocked unit tests only).
+- **QuantConnect:** `POST /api/v2/authenticate` with `QUANTCONNECT_USER_ID` + `QUANTCONNECT_API_TOKEN`; historical files come from the **LEAN CLI** `lean data download` (Dataset Market, **QCC per file**, paid organization tier — not a REST bulk history API). Imports on-disk LEAN zips into `data/research/quantconnect/minute/` and unified `chains/SPY/`. Set `QUANTCONNECT_ALLOW_PAID_DOWNLOAD=true` only when you accept QCC charges.
+
+Neither UW, IBKR, ORATS, Theta Data, Trading Economics, nor QuantConnect ingest was executed against live services in the cloud agent environment (mocked unit tests only).
 
 ## Continuous improvement
 

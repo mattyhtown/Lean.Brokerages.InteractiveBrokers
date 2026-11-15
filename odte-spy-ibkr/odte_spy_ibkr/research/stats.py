@@ -94,6 +94,6 @@ def evaluate_feature(
     return FeatureTestResult(name, len(fx), ic, hr, t, p, baseline)
 
 
-def bonferroni_adjust(p_values: list[float | None]) -> list[float | None]:
-    m = sum(1 for p in p_values if p is not None)
+def bonferroni_adjust(p_values: list[float | None], *, family_size: int | None = None) -> list[float | None]:
+    m = family_size if family_size is not None else sum(1 for p in p_values if p is not None)
     return [min(1.0, p * m) if p is not None else None for p in p_values]

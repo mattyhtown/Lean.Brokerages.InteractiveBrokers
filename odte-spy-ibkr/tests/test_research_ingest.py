@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from odte_spy_ibkr.config import Settings
-from odte_spy_ibkr.research import ibkr_ingest, orats_ingest, uw_ingest
+from odte_spy_ibkr.research import ibkr_ingest, orats_ingest, thetadata_ingest, tradingeconomics_ingest, uw_ingest
+from odte_spy_ibkr.tradingeconomics.client import normalize_te_event
 from odte_spy_ibkr.research.orats_ingest import orats_rows_to_chain_candidates
 
 
@@ -43,6 +44,34 @@ def test_orats_ingest_requires_token():
     settings = Settings(unusual_whales_api_key="", orats_api_token="", alpaca_api_key="", alpaca_api_secret="")
     with pytest.raises(RuntimeError, match="ORATS_API_TOKEN"):
         orats_ingest.require_orats_token(settings)
+
+
+def test_thetadata_ingest_requires_credentials():
+    settings = Settings()
+    with pytest.raises(RuntimeError, match="THETADATA_USERNAME"):
+        thetadata_ingest.ingest_range(settings, start=date(2026, 7, 1), end=date(2026, 7, 2))
+
+
+def test_tradingeconomics_ingest_requires_key():
+    settings = Settings(trading_economics_api_key="")
+    with pytest.raises(RuntimeError, match="TRADING_ECONOMICS_API_KEY"):
+        tradingeconomics_ingest.ingest_range(settings, start=date(2026, 7, 1), end=date(2026, 7, 2))
+
+
+def test_tradingeconomics_normalize_surprise():
+    evt = normalize_te_event(
+        {
+            "Date": "2026-10-14T12:30:00",
+            "Event": "CPI",
+            "Importance": 3,
+            "ActualValue": 0.3,
+            "ForecastValue": 0.2,
+            "Actual": "0.3%",
+            "Forecast": "0.2%",
+        }
+    )
+    assert evt["tier"] == 1
+    assert evt["surprise"] == pytest.approx(0.1)
 
 
 def test_uw_ingest_requires_key():
