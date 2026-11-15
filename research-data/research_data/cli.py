@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from multi_llm.client import ChatRequest, LLMError, complete
 
 from research_data.adjustments import FactorSnapshot, read_factor_files
+from research_data.alphavantage import Article, article_pages
 from research_data.benzinga import Headline, headline_pages
 from research_data.http import LoaderError
 from research_data.local_finbert import LocalFinbert
@@ -21,6 +22,7 @@ from research_data.options import OptionsDay, download_day
 from research_data.pipeline import (
     Sentiment,
     load_adjustments,
+    load_alphavantage,
     load_benzinga,
     load_market_sentiment,
     load_news,
@@ -141,6 +143,18 @@ def _run_benzinga(args: argparse.Namespace, env: Mapping[str, str], supabase: Su
         print(f"benzinga: warning: {warning}", file=sys.stderr)
 
 
+def _run_alphavantage(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
+    api_key = _required(env, "ALPHAVANTAGE_API_KEY")
+
+    def pages(symbol: str, since: date) -> Iterator[list[Article]]:
+        return article_pages(api_key, symbol, since)
+
+    symbols, articles, warnings = load_alphavantage(supabase, pages, _read_watchlist(args.watchlist), args.since)
+    print(f"alphavantage: read {articles} scored articles for {symbols} symbols since {args.since}")
+    for warning in warnings:
+        print(f"alphavantage: warning: {warning}", file=sys.stderr)
+
+
 def _run_openbb(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
     added, newest = load_market_sentiment(supabase, fetch_news_sentiment)
     through = f", stored through {newest}" if newest else ""
@@ -153,6 +167,7 @@ _STEPS = {
     "newsletters": _run_newsletters,
     "news": _run_news,
     "benzinga": _run_benzinga,
+    "alphavantage": _run_alphavantage,
     "score": _run_score,
     "prices": _run_prices,
     "options": _run_options,
@@ -163,6 +178,7 @@ _STEPS = {
 _OPTIONAL_STEP_SETTINGS = {
     "news": "PERPLEXITY_API_KEY",
     "benzinga": "BENZINGA_API_KEY",
+    "alphavantage": "ALPHAVANTAGE_API_KEY",
     "options": "ORATS_API_TOKEN",
     "adjustments": "QUANTCONNECT_LEAN_DATA_DIR",
 }
@@ -182,25 +198,27 @@ def build_parser() -> argparse.ArgumentParser:
     lookback = date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
     parser = argparse.ArgumentParser(
         prog="research-data",
-        description="Load newsletters, news digests, Benzinga headlines, FinBERT sentiment, daily prices, "
-        "options metrics, split and dividend factors and a market news sentiment index into Supabase.",
+        description="Load newsletters, news digests, Benzinga headlines, Alpha Vantage news scores, FinBERT "
+        "sentiment, daily prices, options metrics, split and dividend factors and a market news sentiment index "
+        "into Supabase.",
     )
     parser.add_argument(
         "step",
         choices=[*_STEPS, "all"],
         help="newsletters: Gmail label to passages; news: today's Perplexity news digest per watchlist symbol; "
-        "benzinga: Benzinga headlines per symbol; score: FinBERT on unscored passages; prices: Databento daily "
-        "bars; options: ORATS daily options metrics; adjustments: split and dividend factors from QuantConnect "
-        "factor files on this machine; openbb: the San Francisco Fed news sentiment index through OpenBB; "
-        "all: every step in that order, leaving out news, benzinga, options and adjustments when their setting "
-        "is missing and openbb when OpenBB is not installed",
+        "benzinga: Benzinga headlines per symbol; alphavantage: Alpha Vantage's scored news per symbol; "
+        "score: FinBERT on unscored passages; prices: Databento daily bars; options: ORATS daily options "
+        "metrics; adjustments: split and dividend factors from QuantConnect factor files on this machine; "
+        "openbb: the San Francisco Fed news sentiment index through OpenBB; all: every step in that order, "
+        "leaving out news, benzinga, alphavantage, options and adjustments when their setting is missing and "
+        "openbb when OpenBB is not installed",
     )
     parser.add_argument("--label", default="Substack", help="Gmail label to read (default: Substack)")
     parser.add_argument(
         "--since",
         type=date.fromisoformat,
         default=lookback,
-        help="Read newsletters received and Benzinga headlines published on or after this date "
+        help="Read newsletters received and Benzinga and Alpha Vantage news published on or after this date "
         f"(default: {_DEFAULT_LOOKBACK_DAYS} days ago)",
     )
     parser.add_argument(

@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
 
 from research_data.adjustments import DOWNLOAD_COMMAND, FactorSnapshot
+from research_data.alphavantage import Article, SymbolRejected
 from research_data.benzinga import Headline
 from research_data.http import LoaderError
 from research_data.market_sentiment import SentimentReading
@@ -36,6 +37,7 @@ OptionsDownloader = Callable[[list[str], date], list[OptionsDay]]
 FactorReader = Callable[[list[str]], FactorSnapshot]
 NewsFetcher = Callable[[str, list[str]], NewsDigest]
 HeadlinePager = Callable[[str, date], Iterable[list[Headline]]]
+ArticlePager = Callable[[str, date], Iterable[list[Article]]]
 MarketSentimentFetcher = Callable[[], list[SentimentReading]]
 
 
@@ -410,6 +412,60 @@ def load_benzinga(
     if missing:
         who = ", ".join(missing) if len(missing) < len(symbols) else "any symbol"
         warnings.append(f"Benzinga returned no headlines since {since} for {who}")
+    return len(symbols), read, warnings
+
+
+def load_alphavantage(
+    supabase: SupabaseClient,
+    article_pages: ArticlePager,
+    watchlist: Watchlist,
+    since: date,
+) -> tuple[int, int, list[str]]:
+    """Store Alpha Vantage's scored news since `since` for every watchlist symbol and every mentioned ticker.
+
+    An article is stored once for each symbol it was returned for, with Alpha Vantage's relevance
+    and sentiment for that symbol alone. Each page is saved as it arrives, and an article already
+    stored keeps the scores it was first seen with. Returns how many symbols were looked up, how
+    many articles were read, and warnings.
+    """
+    symbols = _source_symbols(supabase, watchlist)
+    read = 0
+    missing: list[str] = []
+    rejected: list[str] = []
+    for symbol in symbols:
+        found = False
+        try:
+            for page in article_pages(symbol, since):
+                supabase.upsert(
+                    "alphavantage_news",
+                    [
+                        {
+                            "symbol": symbol,
+                            "url": article.url,
+                            "published_at": article.published_at.isoformat(),
+                            "title": article.title,
+                            "source": article.source,
+                            "relevance": article.relevance,
+                            "sentiment": article.sentiment,
+                        }
+                        for article in page
+                    ],
+                    on_conflict="symbol,url",
+                    ignore_duplicates=True,
+                )
+                read += len(page)
+                found = True
+        except SymbolRejected as exc:
+            if len(rejected) + 1 == len(symbols):
+                raise
+            rejected.append(str(exc))
+            continue
+        if not found:
+            missing.append(symbol)
+    warnings = list(rejected)
+    if missing:
+        who = ", ".join(missing) if len(missing) < len(symbols) else "any symbol"
+        warnings.append(f"Alpha Vantage returned no articles since {since} for {who}")
     return len(symbols), read, warnings
 
 
