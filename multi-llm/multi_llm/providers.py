@@ -5,6 +5,10 @@ import os
 from typing import Mapping
 
 
+# Sentiment classifiers return label scores, not generated text.
+CLASSIFICATION_PROTOCOL = "hf_text_classification"
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     name: str
@@ -329,6 +333,15 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "LEPTON_API_KEY",
         endpoint_env="LEPTON_BASE_URL",
     ),
+    # --- Classifiers (not chat models) ---
+    "finbert": ProviderSpec(
+        name="finbert",
+        display_name="FinBERT financial sentiment (Hugging Face Inference)",
+        protocol=CLASSIFICATION_PROTOCOL,
+        default_model="ProsusAI/finbert",
+        base_url="https://router.huggingface.co/hf-inference/models",
+        api_key_envs=("HF_TOKEN", "HUGGINGFACE_API_KEY"),
+    ),
     # --- Local & catch-all ---
     "ollama": ProviderSpec(
         name="ollama",
@@ -427,6 +440,16 @@ def is_provider_configured(spec: ProviderSpec, env: Mapping[str, str] | None = N
     if spec.allow_unauthenticated:
         return bool(source.get(spec.endpoint_env or "", "").strip() or resolve_api_key(spec, source))
     return resolve_api_key(spec, source) is not None
+
+
+def list_configured_chat_providers(env: Mapping[str, str] | None = None) -> list[str]:
+    """Configured providers that answer a prompt; classifiers are left for explicit selection."""
+    source = os.environ if env is None else env
+    return [
+        name
+        for name in ALL_PROVIDER_NAMES
+        if PROVIDERS[name].protocol != CLASSIFICATION_PROTOCOL and is_provider_configured(PROVIDERS[name], source)
+    ]
 
 
 def list_provider_statuses(env: Mapping[str, str] | None = None) -> list[dict[str, object]]:

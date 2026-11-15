@@ -83,6 +83,7 @@ Attach hosted MCP servers directly in `tools` (`type: "mcp"`, `server_url: "http
 | **Groq / Together / Fireworks / Cerebras / Perplexity** | High-throughput OpenAI-compatible inference APIs | `GROQ_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `CEREBRAS_API_KEY`, `PERPLEXITY_API_KEY` |
 | **OpenRouter (300+ LLMs: Llama, Qwen, Nova, etc.)** | Unified `openrouter.ai/api/v1` gateway | `OPENROUTER_API_KEY` (`cd multi-llm && poetry run multi-llm chat --provider openrouter`) |
 | **Azure OpenAI & AWS Bedrock** | Enterprise cloud deployments (`api-key` / Converse API) | `AZURE_OPENAI_*`, `AWS_BEARER_TOKEN_BEDROCK` |
+| **FinBERT (financial sentiment)** | Hugging Face Inference text classification, `ProsusAI/finbert` | `HF_TOKEN` (`cd multi-llm && poetry run multi-llm chat --provider finbert --prompt "..."`) |
 | **Ollama / vLLM / LM Studio / SGLang** | Local open-weight models (`http://127.0.0.1:11434/v1`) | `OLLAMA_BASE_URL` / `OPENAI_COMPATIBLE_BASE_URL` |
 
 ---

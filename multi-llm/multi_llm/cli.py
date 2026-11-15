@@ -6,7 +6,7 @@ import sys
 
 from multi_llm.client import ChatRequest, LLMError, complete, fanout_complete
 from multi_llm.mcp_templates import SUPPORTED_TARGETS, render_mcp_config
-from multi_llm.providers import ALL_PROVIDER_NAMES, list_provider_statuses
+from multi_llm.providers import ALL_PROVIDER_NAMES, list_configured_chat_providers, list_provider_statuses
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "fanout":
             selected = [part.strip() for part in args.providers.split(",") if part.strip()]
             if args.all_configured:
-                selected = [str(row["provider"]) for row in list_provider_statuses() if row["configured"]]
+                selected = list_configured_chat_providers()
             if not selected:
                 raise LLMError("No providers selected (pass --providers or configure keys for --all-configured)")
             results = fanout_complete(

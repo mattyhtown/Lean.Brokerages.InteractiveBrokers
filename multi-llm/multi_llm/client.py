@@ -12,9 +12,9 @@ import urllib.parse
 import urllib.request
 
 from multi_llm.mcp_templates import SUPABASE_MCP_URL, UNUSUAL_WHALES_MCP_URL
-from multi_llm.providers import ProviderSpec, get_provider, resolve_api_key
+from multi_llm.providers import CLASSIFICATION_PROTOCOL, ProviderSpec, get_provider, resolve_api_key
 
-TransportCallable = Callable[[str, dict[str, str], dict[str, object], int], dict[str, object]]
+TransportCallable = Callable[[str, dict[str, str], dict[str, object], int], object]
 
 
 class LLMError(Exception):
@@ -49,6 +49,8 @@ _AZURE_OPENAI_ENDPOINT_RE = re.compile(
     re.IGNORECASE,
 )
 _ANTHROPIC_MCP_BETA = "mcp-client-2025-11-20"
+# Each segment must start with an alphanumeric, which rules out "." and ".." path segments.
+_HF_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?$")
 
 
 def _is_loopback_host(hostname: str | None) -> bool:
@@ -128,7 +130,7 @@ def _default_transport(
     headers: dict[str, str],
     body: dict[str, object],
     timeout_seconds: int,
-) -> dict[str, object]:
+) -> object:
     parsed_url = urllib.parse.urlparse(url)
     if parsed_url.scheme not in ("https", "http") or not parsed_url.netloc:
         raise LLMError(f"Refusing non-HTTP(S) provider URL: {url}")
@@ -138,10 +140,7 @@ def _default_transport(
     request = urllib.request.Request(url, data=encoded, headers=req_headers, method="POST")
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         payload = response.read().decode("utf-8")
-    parsed = json.loads(payload)
-    if not isinstance(parsed, dict):
-        raise LLMError("Expected JSON object response from provider")
-    return parsed
+    return json.loads(payload)
 
 
 def _resolve_remote_mcp_entries(
@@ -260,6 +259,12 @@ def build_wire_request(
         if req.system:
             body["systemInstruction"] = {"parts": [{"text": req.system}]}
         return spec, url, headers, body, secrets
+
+    if spec.protocol == CLASSIFICATION_PROTOCOL:
+        if not _HF_MODEL_ID_RE.fullmatch(model):
+            raise LLMError(f"Invalid Hugging Face model id for provider '{spec.name}': {model!r}")
+        headers = {"Authorization": f"Bearer {api_key}"}
+        return spec, f"{spec.base_url}/{model}", headers, {"inputs": req.prompt}, secrets
 
     if spec.protocol == "cohere_v2":
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -463,6 +468,29 @@ def parse_wire_response(spec: ProviderSpec, model: str, data: dict[str, object])
     return ChatResponse(spec.name, str(data.get("model") or model), text, data)
 
 
+def parse_classification_response(spec: ProviderSpec, model: str, data: object) -> ChatResponse:
+    rows = data
+    # Hugging Face returns one list of label scores per input.
+    if isinstance(rows, list) and rows and isinstance(rows[0], list):
+        rows = rows[0]
+    scored: list[tuple[str, float]] = []
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            label, score = row.get("label"), row.get("score")
+            if isinstance(label, str) and isinstance(score, (int, float)) and not isinstance(score, bool):
+                scored.append((label, float(score)))
+    if not scored:
+        detail = data.get("error") if isinstance(data, dict) else None
+        suffix = f": {detail}" if isinstance(detail, str) and detail.strip() else ""
+        raise LLMError(f"Unexpected classification response from {spec.name}{suffix}")
+    scored.sort(key=lambda item: item[1], reverse=True)
+    text = ", ".join(f"{label} {score:.3f}" for label, score in scored)
+    labels = [{"label": label, "score": score} for label, score in scored]
+    return ChatResponse(spec.name, model, text, {"labels": labels})
+
+
 def complete(
     req: ChatRequest,
     env: Mapping[str, str] | None = None,
@@ -482,6 +510,10 @@ def complete(
             raise LLMError(_redact_secrets(str(exc), secrets)) from None
         safe_msg = _redact_secrets(f"Request to {spec.name} failed: {exc}", secrets)
         raise LLMError(safe_msg) from None
+    if spec.protocol == CLASSIFICATION_PROTOCOL:
+        return parse_classification_response(spec, model, raw)
+    if not isinstance(raw, dict):
+        raise LLMError("Expected JSON object response from provider")
     return parse_wire_response(spec, model, raw)
 
 

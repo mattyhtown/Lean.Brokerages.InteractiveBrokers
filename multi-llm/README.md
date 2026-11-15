@@ -14,6 +14,7 @@ Run `poetry run multi-llm providers` (or `--json`) for the live registry, defaul
 | **Enterprise cloud** | `azure_openai`, `bedrock`, `watsonx`, `vertex_openai`, `databricks`, `snowflake_cortex` |
 | **Gateways & hosting** | `vercel_ai_gateway`, `cloudflare_ai`, `baseten`, `lepton` |
 | **Local / catch-all** | `ollama`, `openai_compatible` (vLLM, LM Studio, SGLang, TGI, custom) |
+| **Sentiment classifier** | `finbert` ([ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert) on Hugging Face Inference) |
 
 **Native remote MCP** on API calls: `anthropic` (`mcp_servers`) and `openai` (Responses `mcp` tools). All other providers use MCP through the host client (Cursor, Claude, Codex, Gemini CLI, etc.).
 
@@ -40,5 +41,19 @@ poetry run multi-llm chat --provider anthropic --attach-mcp uw --prompt "Summari
 poetry run multi-llm fanout --providers anthropic,openai,gemini,xai,moonshot,dashscope --prompt "Compare macro risk"
 poetry run multi-llm fanout --all-configured --prompt "Quick checklist for 0DTE entry gates"
 ```
+
+### FinBERT sentiment
+
+`finbert` is a classifier, not a chat model. The prompt is the text to score, and the reply is the label scores, highest first:
+
+```bash
+export HF_TOKEN=hf_...
+poetry run multi-llm chat --provider finbert --prompt "Shares surged after the company raised full-year guidance."
+# positive 0.948, neutral 0.036, negative 0.016   (illustrative scores)
+```
+
+- `--model` selects another Hugging Face text-classification model, for example `yiyanghkust/finbert-tone`.
+- `--system`, `--max-tokens`, `--temperature` and `--attach-mcp` do not apply to it.
+- `fanout --all-configured` skips it, so a question sent to every chat model is not also scored for sentiment. Name it in `--providers` to include it.
 
 Aliases: `claude`, `gpt`, `chatgpt`, `grok`, `kimi`, `qwen`, `glm`, `hf`, `vllm`, `lmstudio`, `vertex`, `snowflake`, etc. (`poetry run multi-llm chat --provider kimi` → Moonshot).

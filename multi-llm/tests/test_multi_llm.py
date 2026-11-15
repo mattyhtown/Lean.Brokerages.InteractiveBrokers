@@ -19,7 +19,13 @@ from multi_llm.mcp_templates import (
     UNUSUAL_WHALES_NPX_PACKAGE,
     render_mcp_config,
 )
-from multi_llm.providers import ALL_PROVIDER_NAMES, PROVIDERS, get_provider, list_provider_statuses
+from multi_llm.providers import (
+    ALL_PROVIDER_NAMES,
+    PROVIDERS,
+    get_provider,
+    list_configured_chat_providers,
+    list_provider_statuses,
+)
 
 
 def test_all_expected_providers_registered() -> None:
@@ -507,3 +513,105 @@ def test_hosted_api_templates_only_reference_https_servers(target: str) -> None:
     rendered = render_mcp_config(target)
     assert DATABENTO_MCP_COMMAND not in rendered
     assert "http://" not in rendered
+
+
+FINBERT_URL = "https://router.huggingface.co/hf-inference/models/ProsusAI/finbert"
+FINBERT_SCORES = [
+    {"label": "neutral", "score": 0.036},
+    {"label": "positive", "score": 0.948},
+    {"label": "negative", "score": 0.016},
+]
+
+
+def test_finbert_posts_the_prompt_to_hugging_face_text_classification() -> None:
+    spec, url, headers, body, secrets = build_wire_request(
+        ChatRequest(provider="finbert", prompt="Shares surged after earnings.", system="ignored"),
+        env={"HF_TOKEN": "hf_test_token"},
+    )
+    assert spec.name == "finbert"
+    assert url == FINBERT_URL
+    assert headers == {"Authorization": "Bearer hf_test_token"}
+    assert body == {"inputs": "Shares surged after earnings."}
+    assert secrets == ["hf_test_token"]
+
+
+def test_finbert_requires_a_hugging_face_token() -> None:
+    with pytest.raises(LLMError, match="HF_TOKEN or HUGGINGFACE_API_KEY"):
+        build_wire_request(ChatRequest(provider="finbert", prompt="Hi"), env={})
+
+
+@pytest.mark.parametrize("payload", [[FINBERT_SCORES], FINBERT_SCORES])
+def test_finbert_returns_labels_ordered_by_score(payload: list[object]) -> None:
+    calls: list[str] = []
+
+    def transport(url: str, headers: dict[str, str], body: dict[str, object], timeout: int) -> object:
+        calls.append(url)
+        return payload
+
+    resp = complete(ChatRequest(provider="finbert", prompt="Shares surged."), env={"HF_TOKEN": "hf_x"}, transport=transport)
+    assert calls == [FINBERT_URL]
+    assert resp.model == "ProsusAI/finbert"
+    assert resp.text == "positive 0.948, neutral 0.036, negative 0.016"
+    assert [row["label"] for row in resp.raw["labels"]] == ["positive", "neutral", "negative"]  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("payload", [[], [[]], {"error": "Model is loading"}, [{"label": "positive"}], "oops"])
+def test_finbert_rejects_responses_without_label_scores(payload: object) -> None:
+    with pytest.raises(LLMError, match="Unexpected classification response from finbert"):
+        complete(
+            ChatRequest(provider="finbert", prompt="Hi"),
+            env={"HF_TOKEN": "hf_x"},
+            transport=lambda url, headers, body, timeout: payload,
+        )
+
+
+def test_finbert_accepts_another_classifier_model_and_rejects_path_tricks() -> None:
+    env = {"HF_TOKEN": "hf_x"}
+    _, url, _, _, _ = build_wire_request(
+        ChatRequest(provider="finbert", prompt="Hi", model="yiyanghkust/finbert-tone"), env=env
+    )
+    assert url == "https://router.huggingface.co/hf-inference/models/yiyanghkust/finbert-tone"
+    for bad in ("../v1/chat/completions", "ProsusAI/../x", "a/b/c", "ProsusAI/finbert?x=1", " "):
+        with pytest.raises(LLMError, match="Invalid Hugging Face model id"):
+            build_wire_request(ChatRequest(provider="finbert", prompt="Hi", model=bad), env=env)
+
+
+def test_finbert_cannot_take_remote_mcp_attachments() -> None:
+    with pytest.raises(LLMError, match="does not support server-side remote MCP"):
+        build_wire_request(
+            ChatRequest(provider="finbert", prompt="Hi", attach_mcp=("uw",)),
+            env={"HF_TOKEN": "hf_x", "UW_API_KEY": "uw_x"},
+        )
+
+
+def test_all_configured_fanout_skips_classifiers() -> None:
+    env = {"HF_TOKEN": "hf_x", "ANTHROPIC_API_KEY": "sk-ant-x"}
+    by_name = {row["provider"]: row for row in list_provider_statuses(env=env)}
+    assert by_name["finbert"]["configured"] is True
+    selected = list_configured_chat_providers(env=env)
+    assert "finbert" not in selected
+    assert {"anthropic", "huggingface", "ollama"} <= set(selected)
+
+
+def test_finbert_can_be_named_explicitly_in_a_fanout() -> None:
+    def transport(url: str, headers: dict[str, str], body: dict[str, object], timeout: int) -> object:
+        if url == FINBERT_URL:
+            return [FINBERT_SCORES]
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    results = fanout_complete(
+        ["finbert", "groq"], "Shares surged.", env={"HF_TOKEN": "hf_x", "GROQ_API_KEY": "gsk_x"}, transport=transport
+    )
+    assert [(row["provider"], row["ok"], row["text"]) for row in results] == [
+        ("finbert", True, "positive 0.948, neutral 0.036, negative 0.016"),
+        ("groq", True, "ok"),
+    ]
+
+
+def test_chat_providers_still_reject_non_object_json() -> None:
+    with pytest.raises(LLMError, match="Expected JSON object response from provider"):
+        complete(
+            ChatRequest(provider="groq", prompt="Hi"),
+            env={"GROQ_API_KEY": "gsk_x"},
+            transport=lambda url, headers, body, timeout: [{"label": "positive", "score": 0.9}],
+        )
