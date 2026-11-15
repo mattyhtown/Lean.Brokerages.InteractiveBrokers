@@ -212,13 +212,15 @@ def episode_transcript(
         return None
     if episode.audio_url is None:
         raise EpisodeUnavailable("it has neither a readable transcript nor audio")
-    with tempfile.NamedTemporaryFile(suffix=".audio") as audio:
-        try:
-            fetch(episode.audio_url, MAX_AUDIO_BYTES, audio)
-        except LoaderError as exc:
-            raise EpisodeUnavailable(f"its audio could not be downloaded: {exc}") from None
-        audio.flush()
-        transcript = transcribe(Path(audio.name))
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "episode.audio"
+        # Closed before it is transcribed: Windows refuses a second open of a file that is still open for writing.
+        with path.open("wb") as audio:
+            try:
+                fetch(episode.audio_url, MAX_AUDIO_BYTES, audio)
+            except LoaderError as exc:
+                raise EpisodeUnavailable(f"its audio could not be downloaded: {exc}") from None
+        transcript = transcribe(path)
     text = clean_text(transcript.text)
     if not text:
         raise EpisodeUnavailable("no speech was found in its audio")
