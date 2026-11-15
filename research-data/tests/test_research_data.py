@@ -8,8 +8,10 @@ import urllib.parse
 
 import pytest
 
+from research_data import cli, local_finbert
 from research_data.cli import main as cli_main
 from research_data.http import HttpResponse, LoaderError, require_secure_url
+from research_data.local_finbert import LocalFinbert
 from research_data.newsletters import (
     MAX_PASSAGE_CHARS,
     Newsletter,
@@ -468,3 +470,41 @@ def test_cli_names_the_missing_setting(monkeypatch: pytest.MonkeyPatch, capsys: 
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
     assert cli_main(["prices"]) == 1
     assert "research-data: Missing DATABENTO_API_KEY" in capsys.readouterr().err
+
+
+def test_local_finbert_names_the_extra_to_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(local_finbert, "torch", None)
+    with pytest.raises(LoaderError, match="run `poetry install --extras local`"):
+        LocalFinbert()
+
+
+@pytest.mark.skipif(local_finbert.torch is None, reason="needs the local extra; downloads the model on first use")
+def test_local_finbert_scores_the_three_labels_as_probabilities() -> None:
+    score = LocalFinbert()
+    raised = score("Shares surged after the company raised full-year guidance.")
+    cut = score("The company cut its dividend and warned that margins will fall next year.")
+    assert raised.model == "ProsusAI/finbert"
+    assert sorted(raised.scores) == ["negative", "neutral", "positive"]
+    assert sum(raised.scores.values()) == pytest.approx(1.0, abs=1e-4)
+    assert raised.scores["positive"] > 0.8 and cut.scores["negative"] > 0.8
+    assert sum(score("Nvidia beat estimates. " * 400).scores.values()) == pytest.approx(1.0, abs=1e-4)
+
+
+def test_cli_scores_locally_without_a_hugging_face_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    supabase = FakeSupabase({"newsletter_passages": [[{"id": 4, "passage_text": "Apple won."}]]})
+    scores = {"positive": 0.9, "neutral": 0.06, "negative": 0.04}
+
+    def hosted_must_not_run(request: object) -> None:
+        raise AssertionError("the hosted model was called")
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: supabase))
+    monkeypatch.setattr(cli, "LocalFinbert", lambda: lambda text: Sentiment("ProsusAI/finbert", scores))
+    monkeypatch.setattr(cli, "complete", hosted_must_not_run)
+    assert cli_main(["score", "--finbert", "local"]) == 0
+    assert capsys.readouterr().out == "score: scored 1 passages with local FinBERT\n"
+    ((_, filters, values),) = supabase.updates
+    assert (filters, values["sentiment_label"]) == ({"id": "eq.4"}, "positive")
+
