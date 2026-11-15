@@ -44,6 +44,24 @@ Use `coinbase_products_list` with filters before trading. Preview equities/futur
 3. ORATS / Kraken: if discovery still fails, disable and re-enable the server or update the plugin package.
 4. Restart Cursor if tools remain stale after auth.
 
+## Data sources without a connected MCP
+
+These providers publish hosted MCP endpoints. None is connected or listed in this plugin's `mcp.json`; adding one is a change to your Cursor MCP settings. The handshake column is the reply to an MCP `initialize` request sent without credentials on 2026-11-15.
+
+| Provider | Hosted MCP endpoint | Handshake without credentials |
+|----------|---------------------|-------------------------------|
+| CoinGecko | `https://mcp.api.coingecko.com/mcp` | Succeeds. Advertises `search_docs` and `execute`. |
+| Crypto.com Exchange | `https://mcp.crypto.com/market-data/mcp` | Succeeds. Advertises `get_market_orderbook`, `get_market_trades`, `get_market_candles`, `get_widget`. |
+| CoinMarketCap | `https://mcp.coinmarketcap.com/mcp` | 401 "Token not found". Needs a CoinMarketCap API key. |
+| Alpha Vantage | `https://mcp.alphavantage.co/mcp` | 401 "Missing access token". Needs an Alpha Vantage API key. |
+| FMP | `https://financialmodelingprep.com/mcp` | 401 "Authentication required". Needs an FMP API key. |
+| Moomoo | `https://mcp.moomoo.com/mcp` | 401 "missing Bearer token". OAuth sign-in with a moomoo account; scopes `quote:read`, `quote:write`, `trade:read`, `trade:write`. Granting `trade:write` lets the agent place and cancel orders. |
+| Tradier | `https://mcp.tradier.com/mcp` | Succeeds and lists 21 tools, including six order-placement tools. A data call returned "API key is required but not provided (via JWT or API_KEY header)", so it needs a Tradier sign-in or API token. |
+| Seeking Alpha | `https://seekingalpha.com/mcp` | 401 "Authentication required". OAuth sign-in with scope `mcp:pro_mcp`. Seeking Alpha's help center says it is for PRO subscribers only and provides Quant, Analyst and Factor grades. |
+| Bloomberg | `https://mcp.bloomberg.com/mcp` | 401 "No definition of jwt found in header or query string". Its resource metadata names `https://bsso.blpprofessional.com` (Bloomberg sign-in) as the authorization server. Bloomberg describes Enterprise MCP as part of Data License Plus, a licensed enterprise data product; whether this host is that service was not confirmed. No tool list was returned, so its news coverage is unknown. |
+
+No hosted MCP endpoint was checked for Zacks, TipRanks, stockanalysis.com or Yahoo Finance. Until a server is connected, use the direct HTTP table in the instrument-router skill.
+
 ## Secrets (never commit)
 
 | Variable | Used by |
