@@ -55,7 +55,8 @@ Status as checked on 2026-11-15. Re-check a namespace before relying on it.
 | Fundamentals | HTTP: stockanalysis.com statistics and financials payloads | Works without a key. Alpha Vantage and FMP need an API key and none is configured. `Sp-global` and `Daloopa` still need authentication. |
 | Next earnings date | HTTP: Zacks quote feed (`expected_reporting_date`) for one symbol; Alpha Vantage `EARNINGS_CALENDAR` with the `demo` key for the market-wide 3-month calendar | Both work without a private key. The calendar had 846 rows (2026-11-16 to 2027-02-12) with EPS estimate and report time, but AAPL and MSFT were absent, so a missing symbol does not mean no report. |
 | Reported earnings (EPS history, surprises) | HTTP: Alpha Vantage `EARNINGS` | Needs an API key and none is configured. `Alpaca-trading` `get_news` gives headlines only; `get_corporate_actions` covers dividends, splits and mergers, not earnings. |
-| Analyst ratings and price targets | HTTP: TipRanks stock data; Zacks quote feed (`zacks_rank`); stockanalysis.com forecast payload | All three work without a key. |
+| Analyst ratings and price targets | HTTP: TipRanks stock data; stockanalysis.com forecast payload | Both work without a key. |
+| Zacks Rank | HTTP: Zacks quote feed (`zacks_rank`, `zacks_rank_text`) | Works without a key. This is Zacks' own model rank (AAPL returned 3, "Hold"), not an analyst recommendation; report it separately from analyst consensus. |
 | Macro series (rates, CPI, GDP, jobs) | HTTP: Alpha Vantage `REAL_GDP`, `CPI`, `FEDERAL_FUNDS_RATE`, `TREASURY_YIELD`, `UNEMPLOYMENT` | The `demo` key returned five series: annual real GDP, monthly CPI, monthly fed funds rate, monthly 10-year Treasury yield and monthly unemployment rate. The other intervals and maturities tried were refused; they need an API key and none is configured. `You-finance` needs authentication. |
 | Macro proxies | `Alpaca-trading` `get_stock_bars` on bond ETFs (`SHY,IEF,TLT,LQD,HYG,TIP`); `prediction-markets` Kalshi event markets (rate and inflation series such as `KXFEDCUT`) | Market-implied only, not the underlying economic releases. Alpaca index levels and fixed income quotes are not permitted on the current subscription. |
 | Crypto prices | `Coinbase` `coinbase_products_best_bid_ask`; `Alpaca-trading` `get_crypto_snapshot` with `loc=us` | Both work. Prefer Coinbase for pricing: Alpaca quotes come from its own thin venue (BTC spread about $16 against $0.01 on Coinbase when checked). `Kraken` and `1inch-mcp` fail discovery. |
@@ -71,7 +72,9 @@ Status as checked on 2026-11-15. Re-check a namespace before relying on it.
 
 ## Direct HTTP data sources
 
-None of these has a connected MCP. Call them over HTTP (shell `curl` or a web fetch). Status as checked on 2026-11-15 from a Cursor cloud agent VM.
+Apart from Coinbase, none of these has a connected MCP. Call them over HTTP (shell `curl` or a web fetch). Status as checked on 2026-11-15 from a Cursor cloud agent VM.
+
+Only put a symbol into a URL or command if it matches `^[A-Za-z0-9._-]+$`; never paste user text into a shell command. Keep API keys in environment variables and do not echo a URL that carries one.
 
 The Zacks, TipRanks, stockanalysis.com and Yahoo endpoints are the sites' own undocumented endpoints, not published APIs. They can change or be blocked without notice, and each site's terms of use apply.
 
@@ -83,10 +86,10 @@ The Zacks, TipRanks, stockanalysis.com and Yahoo endpoints are the sites' own un
 | Alpha Vantage | `https://www.alphavantage.co/query?function={FUNCTION}&apikey={key}` | Yes | No key configured. The public `demo` key answered the requests listed here and refused every variation tried; it is limited to 2 requests per second. Answered: `GLOBAL_QUOTE`, `OVERVIEW`, `INCOME_STATEMENT`, `EARNINGS`, `INSTITUTIONAL_HOLDINGS` and `INSIDER_TRANSACTIONS` for IBM, `EARNINGS_CALENDAR` with `horizon=3month`, `REAL_GDP` annual, `CPI` monthly, `FEDERAL_FUNDS_RATE` monthly, `TREASURY_YIELD` monthly 10-year, `UNEMPLOYMENT`, `FX_DAILY` EUR/USD and `CURRENCY_EXCHANGE_RATE` BTC/EUR. Refused: `GLOBAL_QUOTE` for AAPL, `CPI` semiannual, `REAL_GDP` quarterly, `TREASURY_YIELD` daily 2-year, `EARNINGS_CALENDAR` with `horizon=12month`, `FX_DAILY` GBP/USD. Alpha Vantage states a free key allows 25 requests per day. |
 | FMP (Financial Modeling Prep) | `https://financialmodelingprep.com/stable/...` | Yes | No key configured. `stable/quote` returned 401 "Invalid API KEY" with no key and with `demo`, so nothing beyond authentication was checked. |
 | Yahoo Finance | `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}` | No | Not usable from the cloud agent VM: chart, `quoteSummary`, search and `getcrumb` all returned 429. Not tested from any other network. |
-| CoinGecko | `https://api.coingecko.com/api/v3/simple/price`, `/coins/markets`, `/global` | No | Works. |
+| CoinGecko | `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd`; `/coins/markets?vs_currency=usd&ids=bitcoin` (market cap, rank, volume); `/global` | No | Works. Coins are addressed by CoinGecko id (`bitcoin`), not ticker. |
 | CoinMarketCap | `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest` | Yes | No key configured. Returned 401 "API key missing". |
 | Coinbase Exchange | `https://api.exchange.coinbase.com/products/{product}/ticker`, `/candles` | No | Works. Use only when the `Coinbase` MCP is not connected. |
-| Crypto.com Exchange | `https://api.crypto.com/exchange/v1/public/get-tickers`, `get-book`, `get-candlestick` with `instrument_name=BTC_USD` | No | Works. |
+| Crypto.com Exchange | GET `https://api.crypto.com/exchange/v1/public/get-tickers?instrument_name=BTC_USD`; `get-book?instrument_name=BTC_USD&depth=2`; `get-candlestick?instrument_name=BTC_USD&timeframe=1D&count=2` | No | Works as plain GET requests with query parameters. |
 | xAI Grok | `https://api.x.ai/v1/...` | Yes | No key configured. `v1/models` returned 401 "No credentials presented". |
 
 Hosted MCP endpoints exist for some of these; see `docs/MCP_HEALTH_CHECKLIST.md`. None is connected.
@@ -120,7 +123,7 @@ If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugi
 - "Kalshi Fed rate market" → `list_kalshi_markets` with `status=open` and search results client-side.
 - "Polymarket book" → `get_polymarket_market` then `get_polymarket_orderbook` with token id from market.
 - "AAPL short interest" → GET `https://stockanalysis.com/stocks/aapl/statistics/__data.json`, resolve the index references, read `shortSelling`.
-- "Analyst view on AAPL" → GET `https://www.tipranks.com/api/stocks/getData/?name=AAPL` for consensus and price targets, and `https://quote-feed.zacks.com/index?t=AAPL` for `zacks_rank`.
+- "Analyst view on AAPL" → GET `https://www.tipranks.com/api/stocks/getData/?name=AAPL` for consensus and price targets. Report `zacks_rank` from `https://quote-feed.zacks.com/index?t=AAPL` separately as Zacks' model rank.
 
 ## Performance notes
 
