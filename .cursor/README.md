@@ -51,6 +51,16 @@ Governance: use the official MongoDB plugin only; avoid ad-hoc `npx @modelcontex
 
 Optional local plugin on this machine: `~/.cursor/plugins/local/unusual-whales-mcp/`.
 
+## Universal instruments (repo plugin)
+
+Multi-asset routing for equities, options, forex, bonds, crypto, and **prediction markets** (Kalshi + Polymarket read-only):
+
+1. Build prediction MCP once: `cd agent-tools/universal-instruments-plugin/mcp/prediction-markets && npm install && npm run build`
+2. Optional IB bridge: `pip install -r agent-tools/universal-instruments-plugin/mcp/ib-lean-bridge/requirements.txt` (requires IB Gateway/TWS).
+3. Merge **`prediction-markets`** and **`ib-lean-bridge`** from [`mcp.json.example`](mcp.json.example) into your user MCP config, or install the plugin from [`agent-tools/universal-instruments-plugin/README.md`](../agent-tools/universal-instruments-plugin/README.md).
+4. Enable skill **instrument-router** / rule **instrument-routing** when asking cross-asset questions.
+5. MCP health and IB setup: [`docs/MCP_HEALTH_CHECKLIST.md`](../agent-tools/universal-instruments-plugin/docs/MCP_HEALTH_CHECKLIST.md), [`docs/IB_LEAN_SETUP.md`](../agent-tools/universal-instruments-plugin/docs/IB_LEAN_SETUP.md).
+
 ## Single user `mcp.json` merge
 
 Combine Unusual Whales with any other URL servers you already have. Supabase and MongoDB are normally provided by **plugins**, not duplicated in `mcp.json`.

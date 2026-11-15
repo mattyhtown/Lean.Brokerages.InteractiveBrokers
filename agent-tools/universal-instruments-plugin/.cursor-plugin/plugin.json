@@ -1,0 +1,8 @@
+{
+  "name": "universal-instruments",
+  "version": "1.0.0",
+  "description": "MCP servers and skills for multi-asset coverage: prediction markets, IB bridge, and instrument routing.",
+  "author": "QuantConnect Community",
+  "license": "Apache-2.0",
+  "keywords": ["trading", "mcp", "kalshi", "polymarket", "interactive-brokers", "alpaca"]
+}

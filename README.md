@@ -25,6 +25,10 @@ IB was founded by Thomas Peterffy in 1993 with the goal to "create technology to
 
 For more information about the IB brokerage, see the [QuantConnect-IB Integration Page](https://www.quantconnect.com/docs/v2/our-platform/live-trading/brokerages/interactive-brokers).
 
+## Agent tooling (multi-asset MCP)
+
+For Cursor agents that need **prediction markets**, **IB forex/bonds/futures** history, and routing across Alpaca/Coinbase/IB, see [`agent-tools/universal-instruments-plugin/README.md`](agent-tools/universal-instruments-plugin/README.md).
+
 ## Using the Brokerage Plugin
   
 ### Deploying IB with VSCode User Interace
