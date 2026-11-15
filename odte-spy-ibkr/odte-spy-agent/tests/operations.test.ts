@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -345,6 +345,72 @@ test("improvement_run flags a changed active params file", async () => {
   assert.equal(result.activeParamsChanged, true);
   assert.equal(result.decisionReason, "promoted");
   assert.equal(result.qualifiedForPaperPromotion, false);
+});
+
+test("improvement runs queue, so each one reports its own history record", async () => {
+  await seedParams();
+  let active = 0;
+  let maxActive = 0;
+  let serial = 0;
+  const engine: FakeEngine = async (request) => {
+    if (request.module !== "odte_spy_ibkr.improvement") {
+      const record = JSON.parse(await readFile(argAfter(request, "--promotion-check"), "utf8"));
+      return { stdout: JSON.stringify({ reason: `decision_for_${record.best_candidate}` }) };
+    }
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    serial += 1;
+    const mine = serial;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(
+      path.join(engineDir, "params", "history", `20261115T09000${mine}Z.json`),
+      JSON.stringify({ best_candidate: `candidate_${mine}` }),
+    );
+    active -= 1;
+    return {};
+  };
+  const shared = deps(engine);
+  const [first, second] = await Promise.all([improvementRun(shared), improvementRun(shared)]);
+
+  assert.equal(maxActive, 1);
+  assert.ok(first.ok && second.ok);
+  assert.match(first.historyFile, /20261115T090001Z\.json$/);
+  assert.equal(first.decisionReason, "decision_for_candidate_1");
+  assert.match(second.historyFile, /20261115T090002Z\.json$/);
+  assert.equal(second.decisionReason, "decision_for_candidate_2");
+});
+
+test("improvement_run refuses to guess when two history records changed", async () => {
+  await seedParams();
+  const result = await improvementRun(
+    deps(async () => {
+      for (const name of ["20261115T090000Z.json", "20261115T090001Z.json"]) {
+        await writeFile(path.join(engineDir, "params", "history", name), "{}");
+      }
+      return {};
+    }),
+  );
+  assert.ok(!result.ok);
+  assert.equal(result.error, "bad_engine_output");
+  assert.match(result.detail, /2 history records changed/);
+  assert.equal(calls.length, 1, "no promotion check on a record that may not be this run's");
+});
+
+test("improvement_run recognizes a record rewritten under the same second's name", async () => {
+  await seedParams();
+  const existing = path.join(engineDir, "params", "history", HISTORY_NAME);
+  await writeFile(existing, JSON.stringify({ best_candidate: "earlier" }));
+  await utimes(existing, new Date("2026-11-15T09:00:00Z"), new Date("2026-11-15T09:00:00Z"));
+  const result = await improvementRun(
+    deps(
+      improvementEngine({
+        record: { best_candidate: "later" },
+        decision: { reason: "below_sharpe_target", would_promote: false },
+      }),
+    ),
+  );
+  assert.ok(result.ok);
+  assert.deepEqual(result.historyRecord, { best_candidate: "later" });
 });
 
 test("improvement_run without a new history record is a failure", async () => {

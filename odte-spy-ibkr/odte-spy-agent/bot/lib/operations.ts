@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -264,10 +264,34 @@ export async function backtest(input: BacktestInput, deps = defaultDeps()) {
   });
 }
 
-export async function improvementRun(deps = defaultDeps()) {
+/** History file name -> modification time. */
+async function historySnapshot(dir: string): Promise<Map<string, number>> {
+  const snapshot = new Map<string, number>();
+  for (const name of await listIfExists(dir)) {
+    try {
+      snapshot.set(name, (await stat(path.join(dir, name))).mtimeMs);
+    } catch {
+      // Removed between the listing and the stat.
+    }
+  }
+  return snapshot;
+}
+
+// The engine names a history record by the second and prints nothing, so a
+// record is matched to its run by what changed on disk. That only holds for
+// one run at a time: runs in this process queue here.
+let improvementQueue: Promise<unknown> = Promise.resolve();
+
+export function improvementRun(deps = defaultDeps()) {
+  const result = improvementQueue.then(() => runImprovement(deps));
+  improvementQueue = result.catch(() => undefined);
+  return result;
+}
+
+async function runImprovement(deps: OperationDeps) {
   const historyDir = path.join(deps.engineDir, "params", "history");
   const activePath = path.join(deps.engineDir, "params", "active.yaml");
-  const historyBefore = new Set(await listIfExists(historyDir));
+  const historyBefore = await historySnapshot(historyDir);
   const activeBefore = await readIfExists(activePath);
 
   const run = await deps.run({
@@ -279,10 +303,19 @@ export async function improvementRun(deps = defaultDeps()) {
     return failureOf(run);
   }
 
-  const newHistory = (await listIfExists(historyDir))
-    .filter((name) => !historyBefore.has(name))
-    .sort();
-  const historyFile = newHistory.at(-1) ?? null;
+  // Written by this run: a new name, or a same-second name written again.
+  const written = [...(await historySnapshot(historyDir))]
+    .filter(([name, mtimeMs]) => historyBefore.get(name) !== mtimeMs)
+    .map(([name]) => name);
+  if (written.length > 1) {
+    return failure(
+      run,
+      "bad_engine_output",
+      `${written.length} history records changed during the run (${written.sort().join(", ")}); ` +
+        "another process is writing params/history, so this run's record cannot be identified",
+    );
+  }
+  const historyFile = written[0] ?? null;
   let historyRecord: Record<string, Json> | null = null;
   if (historyFile !== null) {
     const text = await readIfExists(path.join(historyDir, historyFile));

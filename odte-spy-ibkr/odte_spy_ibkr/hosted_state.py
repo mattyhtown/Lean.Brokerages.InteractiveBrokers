@@ -149,8 +149,17 @@ def promotion_check(settings: Settings, history_path: str | Path) -> dict[str, A
     ``should_promote`` the same question. It decides only; it writes nothing.
     """
     record = json.loads(Path(history_path).read_text(encoding="utf-8"))
+    # A null best_sharpe is what the improvement run writes when the holdout is
+    # too short to score. A missing or non-numeric one is a broken record, and
+    # must not be reported as a challenger that fell below the target.
+    if not isinstance(record, dict) or "best_sharpe" not in record:
+        raise ValueError(f"{history_path}: not an improvement history record (no best_sharpe)")
+    challenger_sharpe = record["best_sharpe"]
+    if challenger_sharpe is not None and (
+        isinstance(challenger_sharpe, bool) or not isinstance(challenger_sharpe, (int, float))
+    ):
+        raise ValueError(f"{history_path}: best_sharpe is not a number: {challenger_sharpe!r}")
     active = load_active_params(settings.params_active_path)
-    challenger_sharpe = record.get("best_sharpe")
     decision = should_promote(
         settings,
         active,

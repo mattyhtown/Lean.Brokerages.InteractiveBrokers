@@ -194,3 +194,21 @@ def test_promotion_check_cli_prints_one_json_object(tmp_path, capsys):
     with patch.object(hosted_state, "load_settings", return_value=settings):
         hosted_state.main(["--promotion-check", str(_history(tmp_path, 0.4))])
     assert json.loads(capsys.readouterr().out)["reason"] == "below_sharpe_target"
+
+
+@pytest.mark.parametrize("record", [{"best_candidate": "candidate_1"}, {"best_sharpe": "1.9"}, {"best_sharpe": True}, []])
+def test_promotion_check_rejects_a_broken_record_instead_of_calling_it_below_target(tmp_path, record):
+    settings = _settings(tmp_path)
+    path = tmp_path / "broken.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="best_sharpe"):
+        hosted_state.promotion_check(settings, path)
+
+
+def test_promotion_check_cli_fails_on_a_broken_record(tmp_path, capsys):
+    path = tmp_path / "broken.json"
+    path.write_text("{}", encoding="utf-8")
+    with patch.object(hosted_state, "load_settings", return_value=_settings(tmp_path)):
+        with pytest.raises(ValueError):
+            hosted_state.main(["--promotion-check", str(path)])
+    assert capsys.readouterr().out == ""
