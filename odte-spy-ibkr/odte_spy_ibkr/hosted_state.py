@@ -3,8 +3,9 @@
 ``python -m odte_spy_ibkr.hosted_state`` prints the current signal and gate
 state. With ``--promotion-check <history.json>`` it prints the promotion
 decision the engine reaches for that improvement record. With
-``--chain-coverage FROM TO`` or ``--improvement-chain-coverage`` it prints
-where a backtest over those sessions would get its option chains.
+``--chain-coverage FROM TO [--walk-forward]`` or
+``--improvement-chain-coverage`` it prints where the sessions a backtest or
+an improvement run scores would get their option chains.
 
 None of them connects to IB, places orders, writes the journal or changes
 the active params. Anything that needs an IB session is reported as
@@ -24,6 +25,7 @@ from typing import Any
 
 from odte_spy_ibkr.backtest.calendar import iter_trading_days
 from odte_spy_ibkr.backtest.data_loader import _cache_path
+from odte_spy_ibkr.backtest.walk_forward import holdout_test_days
 from odte_spy_ibkr.config import Settings, load_settings
 from odte_spy_ibkr.improvement.evaluator import LOOKBACK_DAYS
 from odte_spy_ibkr.improvement.promoter import should_promote
@@ -192,8 +194,14 @@ def promotion_check(settings: Settings, history_path: str | Path) -> dict[str, A
     }
 
 
-def chain_coverage(settings: Settings, start: date, end: date) -> dict[str, Any]:
-    """Where a backtest of ``start``..``end`` would get each session's option chain.
+def chain_coverage(
+    settings: Settings, start: date, end: date, *, walk_forward: bool = False
+) -> dict[str, Any]:
+    """Where the sessions a backtest of ``start``..``end`` scores would get their option chains.
+
+    A walk-forward backtest, and every improvement run, simulates the whole
+    range but scores only the final holdout slice, so only that slice is
+    counted; ``from`` and ``to`` are then its first and last session.
 
     Follows the lookup order of ``backtest.data_loader.load_chain_for_day`` and
     only reads, so it has to run before the backtest: the backtest caches what
@@ -202,7 +210,14 @@ def chain_coverage(settings: Settings, start: date, end: date) -> dict[str, Any]
     neither gets the engine's substitute.
     """
     research = cached = missing = 0
-    days = iter_trading_days(start, end)
+    simulated = iter_trading_days(start, end)
+    days = simulated
+    if walk_forward:
+        days = holdout_test_days(
+            simulated,
+            train_days=settings.backtest_walk_forward_train_days,
+            test_days=settings.backtest_walk_forward_test_days,
+        )
     for day in days:
         cache = _cache_path(settings, settings.underlying, day)
         if load_chain_rows(day, snapshot="signal", root=CHAIN_ROOT):
@@ -212,9 +227,10 @@ def chain_coverage(settings: Settings, start: date, end: date) -> dict[str, Any]
         else:
             missing += 1
     return {
-        "from": start.isoformat(),
-        "to": end.isoformat(),
+        "from": (days[0] if walk_forward and days else start).isoformat(),
+        "to": (days[-1] if walk_forward and days else end).isoformat(),
         "sessions": len(days),
+        "simulated_sessions": len(simulated),
         "research_chain_sessions": research,
         "cached_chain_sessions": cached,
         "no_chain_sessions": missing,
@@ -239,7 +255,12 @@ def main(argv: list[str] | None = None) -> None:
         nargs=2,
         type=date.fromisoformat,
         metavar=("FROM", "TO"),
-        help="Print where a backtest of these sessions would get its option chains.",
+        help="Print where the sessions a backtest of this range scores would get their option chains.",
+    )
+    parser.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="With --chain-coverage: the backtest scores only its holdout slice.",
     )
     mode.add_argument(
         "--improvement-chain-coverage",
@@ -252,10 +273,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.promotion_check:
         result = promotion_check(settings, args.promotion_check)
     elif args.chain_coverage:
-        result = chain_coverage(settings, *args.chain_coverage)
+        result = chain_coverage(settings, *args.chain_coverage, walk_forward=args.walk_forward)
     elif args.improvement_chain_coverage:
         today = date.today()
-        result = chain_coverage(settings, today - timedelta(days=LOOKBACK_DAYS), today)
+        result = chain_coverage(
+            settings, today - timedelta(days=LOOKBACK_DAYS), today, walk_forward=True
+        )
     else:
         result = build_state(settings)
     print(json.dumps(result, default=str))

@@ -9,9 +9,11 @@ export default defineTool({
   description: prompt`
     Run the historical backtest (python -m odte_spy_ibkr.backtest) and apply
     the rolling Sharpe check. Returns the summary, whether the check passed,
-    and chainCoverage: where each session's option chain came from. Only
-    research_chain_sessions were simulated on that day's own chain, from
-    the research cache. A cached chain is whatever an earlier backtest
+    and chainCoverage: where the option chain of each scored session came
+    from. With walkForward, only the holdout window is scored: sessions
+    counts it, from and to bound it, and simulated_sessions is the whole
+    range. Only research_chain_sessions were simulated on that day's own
+    chain, from the research cache. A cached chain is whatever an earlier backtest
     stored under that date. A session with no chain gets
     no_chain_substitute: Alpaca's current snapshot, which is today's chain
     and not that day's, or a synthetic chain. Neither is market evidence.

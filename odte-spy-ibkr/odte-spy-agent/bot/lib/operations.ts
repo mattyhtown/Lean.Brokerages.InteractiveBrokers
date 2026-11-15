@@ -139,7 +139,7 @@ function queued<T>(job: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Where the backtest behind a job will get its option chains. Asked before
+ * Where the sessions a job scores will get their option chains. Asked before
  * the job, because a backtest caches the chains it fetches. null: not known.
  */
 async function chainCoverage(deps: OperationDeps, args: string[]) {
@@ -306,7 +306,12 @@ export async function backtest(input: BacktestInput, deps = defaultDeps()) {
 
 function runBacktest(input: BacktestInput, deps: OperationDeps) {
   return withTempDir(async (dir) => {
-    const coverage = await chainCoverage(deps, ["--chain-coverage", input.from, input.to]);
+    const coverage = await chainCoverage(deps, [
+      "--chain-coverage",
+      input.from,
+      input.to,
+      ...(input.walkForward ? ["--walk-forward"] : []),
+    ]);
     const reportPath = path.join(dir, "backtest.json");
     const args = [
       "--from",

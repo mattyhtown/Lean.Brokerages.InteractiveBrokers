@@ -253,12 +253,13 @@ const backtestInput = {
 };
 
 const COVERAGE = {
-  from: "2026-07-01",
-  to: "2026-11-05",
-  sessions: 92,
-  research_chain_sessions: 30,
+  from: "2026-09-24",
+  to: "2026-10-21",
+  sessions: 20,
+  simulated_sessions: 92,
+  research_chain_sessions: 5,
   cached_chain_sessions: 2,
-  no_chain_sessions: 60,
+  no_chain_sessions: 13,
   no_chain_substitute: "alpaca_current_snapshot",
 };
 
@@ -284,10 +285,11 @@ test("backtest passes the rolling Sharpe requirement and reports a pass", async 
     backtestInput,
     deps(backtestEngine({ max_rolling_sharpe: 1.8, trade_count: 12 })),
   );
-  // Coverage is read first: the backtest caches the chains it fetches.
+  // Coverage is read first: the backtest caches the chains it fetches. It
+  // is asked for the sessions this walk-forward backtest scores.
   assert.deepEqual(calls[0], {
     module: "odte_spy_ibkr.hosted_state",
-    args: ["--chain-coverage", "2026-07-01", "2026-11-05"],
+    args: ["--chain-coverage", "2026-07-01", "2026-11-05", "--walk-forward"],
     timeoutMs: 60_000,
   });
   assert.equal(calls[1]?.module, "odte_spy_ibkr.backtest");
@@ -298,6 +300,15 @@ test("backtest passes the rolling Sharpe requirement and reports a pass", async 
   assert.deepEqual(result.sharpeCheck, { requiredRollingSharpe: 1.5, passed: true });
   assert.equal(result.summary.max_rolling_sharpe, 1.8);
   assert.deepEqual(result.chainCoverage, COVERAGE);
+});
+
+test("a backtest that scores every session asks for coverage of every session", async () => {
+  await backtest(
+    { ...backtestInput, walkForward: false },
+    deps(backtestEngine({ max_rolling_sharpe: 1.8 })),
+  );
+  assert.deepEqual(calls[0]?.args, ["--chain-coverage", "2026-07-01", "2026-11-05"]);
+  assert.equal(calls[1]?.args.includes("--walk-forward"), false);
 });
 
 test("backtest exit 1 with a report is a failed Sharpe check, not an error", async () => {

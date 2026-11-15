@@ -32,7 +32,9 @@ Ingest, evaluate, backtest and improvement jobs started by one agent process
 run one at a time: the engine reads and writes its cache files without
 locking. A second process on the same engine folder is not coordinated.
 
-`backtest` and `improvement_run` return `chainCoverage`. The engine simulates
+`backtest` and `improvement_run` return `chainCoverage` for the sessions the
+score rests on: the holdout window for an improvement run or a walk-forward
+backtest, every session otherwise. The engine simulates
 a session on that day's own option chain only when the research cache has
 one (ORATS or Unusual Whales ingest). For any other session it uses a chain
 an earlier backtest cached, Alpaca's current snapshot, or a synthetic chain,

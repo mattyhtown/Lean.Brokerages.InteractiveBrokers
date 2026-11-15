@@ -11,8 +11,9 @@ export default defineTool({
     and qualifiedForPaperPromotion says whether the best challenger cleared
     the Sharpe target and margin (null when the decision could not be read).
     chainCoverage says which option chains the scores rest on, as in
-    backtest: a challenger scored on substituted chains has not qualified
-    on market evidence.
+    backtest. It covers the holdout sessions the pass scores, not the
+    whole lookback. A challenger scored on substituted chains has not
+    qualified on market evidence.
   `,
   effect: "write",
   async execute() {

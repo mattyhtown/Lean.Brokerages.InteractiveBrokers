@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from odte_spy_ibkr import hosted_state
+from odte_spy_ibkr.backtest.calendar import iter_trading_days
 from odte_spy_ibkr.config import Settings, load_settings
 from odte_spy_ibkr.improvement.evaluator import LOOKBACK_DAYS
 from odte_spy_ibkr.providers.base import BaseProvider, FlowBias, MarketContext, MarketContextDelta, VolRegime
@@ -290,6 +291,7 @@ def test_chain_coverage_separates_dated_chains_from_cached_and_missing_ones(monk
         "from": "2026-11-02",
         "to": "2026-11-09",
         "sessions": 6,
+        "simulated_sessions": 6,
         "research_chain_sessions": 1,
         "cached_chain_sessions": 2,
         "no_chain_sessions": 3,
@@ -313,11 +315,40 @@ def test_chain_coverage_cli_covers_the_window_an_improvement_run_scores(monkeypa
         improvement = json.loads(capsys.readouterr().out)
         hosted_state.main(["--chain-coverage", "2026-11-02", "2026-11-06"])
         explicit = json.loads(capsys.readouterr().out)
-    today = date.today()
-    assert improvement["to"] == today.isoformat()
-    assert improvement["from"] == (today - timedelta(days=LOOKBACK_DAYS)).isoformat()
-    assert improvement["sessions"] == improvement["no_chain_sessions"] > 0
+    # 120 calendar days hold 85 to 87 sessions: one 60-train, 20-test fold, so
+    # the run scores sessions 61 to 80 and not the last few.
+    simulated = iter_trading_days(date.today() - timedelta(days=LOOKBACK_DAYS), date.today())
+    assert improvement["simulated_sessions"] == len(simulated)
+    assert improvement["sessions"] == improvement["no_chain_sessions"] == 20
+    assert improvement["from"] == simulated[60].isoformat()
+    assert improvement["to"] == simulated[79].isoformat()
     assert (explicit["from"], explicit["to"], explicit["sessions"]) == ("2026-11-02", "2026-11-06", 5)
+    assert explicit["simulated_sessions"] == 5
+
+
+def test_walk_forward_coverage_counts_only_the_sessions_that_are_scored(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    settings = _settings(tmp_path, BACKTEST_WALK_FORWARD_TRAIN_DAYS="3", BACKTEST_WALK_FORWARD_TEST_DAYS="2")
+    row = {"symbol": "SPY", "strike": 600.0, "right": "P"}
+    # Seven sessions, 11-02 to 11-10. The last 3-train, 2-test fold scores 11-09 and 11-10.
+    for day in ("2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09"):
+        _write_chain(Path(f"data/research/chains/SPY/{day}.json"), [row])
+
+    with patch.object(hosted_state, "load_settings", return_value=settings):
+        hosted_state.main(["--chain-coverage", "2026-11-02", "2026-11-10", "--walk-forward"])
+    coverage = json.loads(capsys.readouterr().out)
+
+    assert coverage == {
+        "from": "2026-11-09",
+        "to": "2026-11-10",
+        "sessions": 2,
+        "simulated_sessions": 7,
+        "research_chain_sessions": 1,
+        "cached_chain_sessions": 0,
+        "no_chain_sessions": 1,
+        "no_chain_substitute": "synthetic",
+    }
+    assert hosted_state.chain_coverage(settings, date(2026, 11, 2), date(2026, 11, 10))["research_chain_sessions"] == 6
 
 
 def test_a_dotenv_file_is_ignored_when_the_host_builds_the_environment(monkeypatch, tmp_path):
