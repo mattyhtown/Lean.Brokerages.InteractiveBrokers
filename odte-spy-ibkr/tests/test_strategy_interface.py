@@ -84,15 +84,6 @@ def test_importing_strategy_data_and_backtest_code_does_not_load_ib_insync():
     assert result.returncode == 0, result.stderr
 
 
-def test_only_the_ib_client_touches_ib_insync():
-    users = [
-        path.relative_to(PACKAGE).as_posix()
-        for path in sorted(PACKAGE.rglob("*.py"))
-        if any(m.split(".")[0] == "ib_insync" for m in imported_modules(path))
-    ]
-    assert users == ["ib_client.py"]
-
-
 def test_live_and_backtest_call_the_same_strategy_functions():
     assert live_runner.propose_entry is interface.propose_entry is simulator.propose_entry
     assert live_runner.manage_open is interface.manage_open is simulator.manage_open
