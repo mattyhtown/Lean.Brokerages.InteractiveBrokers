@@ -16,7 +16,28 @@ Use this after connecting or reconnecting brokers in **Cursor → Settings → T
 | **Daloopa** | Authenticated | Needed for fundamentals and earnings detail; shows `needsAuth` until connected |
 | **You-finance** | Authenticated | Shows `needsAuth` until connected |
 | **prediction-markets** (this plugin) | `list_kalshi_markets`, `list_polymarket_markets` | No secrets for read-only Gamma/Kalshi public APIs |
-| **ib-lean-bridge** (this plugin) | `ping`, `get_historical_bars` | Requires TWS/IB Gateway + env vars |
+| **ib-lean-bridge** (this plugin) | `ping`, `get_historical_bars`, `preview_order` | Requires TWS/IB Gateway + env vars |
+
+## Coverage checklist
+
+Asset class, the tool that serves it, what the account needs, and what a live call returned on 2026-11-15 from a Cursor cloud agent. "Not checked" means no call was made.
+
+| Asset class | Tool | Account needs | Status on 2026-11-15 |
+|-------------|------|---------------|----------------------|
+| US stocks and ETFs | `Alpaca-trading` `get_stock_bars`, `place_stock_order`; `Coinbase` with `product_type=EQUITY` | A funded account at the broker used | `Alpaca-trading` connected (`get_clock` answered). `Coinbase` listed `NVDA-USD`. No order was placed. |
+| Equity option chains | `Alpaca-trading` `get_option_chain` | Signed OPRA agreement for `feed=opra`; nothing extra for `feed=indicative` | `feed=opra` returned 403 "OPRA agreement is not signed". `feed=indicative` returned SPY quotes. |
+| Index option chains (SPX, XSP, VIX, DJX) | `Alpaca-trading` `get_option_chain` | Same feed rule; trading them needs Alpaca to enable index options on the account | SPX chain returned on `feed=indicative`. Trading enablement not checked. |
+| Index levels | `Alpaca-trading` `get_index_latest_values` | Alpaca index data entitlement | 403 "insufficient grants". |
+| Bond quotes | `Alpaca-trading` `get_fixed_income_latest_quotes` | Alpaca fixed income data subscription | 403 "Subscription does not permit querying fixed income". |
+| Crypto spot | `Coinbase` with `product_type=SPOT`; `Alpaca-trading` crypto tools with `loc=us` | A funded account | Both answered; see the instrument-router skill. |
+| US crypto futures | `Coinbase` with `product_type=FUTURE` | Separate Coinbase futures approval to trade | Listing visible (`BIP-20DEC30-CDE`, `BIT-27NOV26-CDE`). Trading approval not checked. |
+| International perpetuals | `Coinbase` with `product_type=GLOBAL_PERP` | Separate eligibility and approval to trade | Listing visible. Trading eligibility not checked. |
+| Forex, CME futures, bonds, NDX and RUT options | `ib-lean-bridge` (this plugin); LEAN live for everything except bonds | IB account with trading permission and a market data subscription for each asset class; Gateway or TWS running with the API enabled | Not connected: no IB login on the cloud agent, nothing listening on `127.0.0.1:7497`. |
+| Prediction markets | `prediction-markets` (this plugin) | Nothing for reading | All nine tools answered against Kalshi and Polymarket. |
+| Options analytics | `orats` | ORATS subscription | Tool discovery failed; reconnect in Cursor settings. |
+| Kraken | `Kraken` | Kraken API connection | Tool discovery failed; reconnect in Cursor settings. |
+| Paper trading | `Alpaca-trading-paper` (same tools as `Alpaca-trading`, against the paper account) | Sign-in | Connected. `get_account_info` returned status `ACTIVE`, options level 3, shorting enabled and crypto active. Data entitlements match the live connection: `feed=opra` returned 403 "OPRA agreement is not signed" and the SPX chain returned on `feed=indicative`. No order was placed. |
+| Broker API | `Alpaca-broker`, `Alpaca-broker-sandbox` | Sign-in for each; these are Alpaca's Broker API for firms that open accounts for their own customers, not needed to trade your own account | Both report that authentication is required. |
 
 ## Alpaca — options and index options
 
@@ -68,6 +89,7 @@ No hosted MCP endpoint was checked for Zacks, TipRanks, stockanalysis.com or Yah
 |----------|---------|
 | `KALSHI_API_KEY_ID`, `KALSHI_PRIVATE_KEY_PEM` | Kalshi authenticated endpoints (optional; public market list works without) |
 | `IB_HOST`, `IB_PORT`, `IB_CLIENT_ID` | `ib-lean-bridge` MCP |
+| `IB_ACCOUNT`, `IB_ALLOW_ORDERS` | `ib-lean-bridge` MCP. Not secrets: the account to trade, and `1` to allow `place_order` and `cancel_order` (off by default) |
 | Alpaca / Coinbase | Managed via Cursor MCP OAuth or env in server config |
 
 ## Coverage routing
