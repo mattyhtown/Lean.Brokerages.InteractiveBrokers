@@ -12,3 +12,8 @@
 
 # Optional
 # MDB_MCP_READ_ONLY=true
+
+# Databento (dbn-go-mcp-meta). Keys start with "db-". DATABENTO_API_KEY_FILE=/path/to/key.txt also works.
+# DATABENTO_API_KEY=
+
+# Theta Data needs no variable here: Theta Terminal v3 holds the login and serves MCP on 127.0.0.1:25503.

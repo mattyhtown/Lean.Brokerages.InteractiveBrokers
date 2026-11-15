@@ -13,6 +13,16 @@
       "env": {
         "UW_API_KEY": "YOUR_API_KEY"
       }
+    },
+    "databento": {
+      "command": "dbn-go-mcp-meta",
+      "args": [],
+      "env": {
+        "DATABENTO_API_KEY": "YOUR_DATABENTO_API_KEY"
+      }
+    },
+    "thetadata": {
+      "url": "http://127.0.0.1:25503/mcp/sse"
     }
   }
 }

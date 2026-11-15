@@ -16,3 +16,12 @@ args = ["-y", "mongodb-mcp-server@3.3.0"]
 MDB_MCP_API_CLIENT_ID = "YOUR_ATLAS_CLIENT_ID"
 MDB_MCP_API_CLIENT_SECRET = "YOUR_ATLAS_CLIENT_SECRET"
 MDB_MCP_READ_ONLY = "true"
+
+# Community server (NimbleMarkets/dbn-go), metadata only: no tool incurs Databento billing.
+[mcp_servers.databento]
+command = "dbn-go-mcp-meta"
+
+[mcp_servers.databento.env]
+DATABENTO_API_KEY = "YOUR_DATABENTO_API_KEY"
+
+# Theta Data is not listed: Theta Terminal serves MCP over SSE only, which Codex does not support.

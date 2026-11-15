@@ -17,6 +17,12 @@
       "id": "mdb-client-secret",
       "description": "MongoDB Atlas API Client Secret",
       "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "databento-api-key",
+      "description": "Databento API Key",
+      "password": true
     }
   ],
   "servers": {
@@ -40,6 +46,18 @@
         "MDB_MCP_API_CLIENT_SECRET": "${input:mdb-client-secret}",
         "MDB_MCP_READ_ONLY": "true"
       }
+    },
+    "databento": {
+      "type": "stdio",
+      "command": "dbn-go-mcp-meta",
+      "args": [],
+      "env": {
+        "DATABENTO_API_KEY": "${input:databento-api-key}"
+      }
+    },
+    "thetadata": {
+      "type": "sse",
+      "url": "http://127.0.0.1:25503/mcp/sse"
     }
   }
 }
