@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Sequence
 
 from odte_spy_ibkr.chain import (
@@ -57,8 +58,9 @@ def build_entry_plan(
     candidates: Sequence[OptionCandidate],
     *,
     contracts: int = 1,
+    now: datetime | None = None,
 ) -> EntryPlan | None:
-    gate = evaluate_flow_gate(settings, ctx)
+    gate = evaluate_flow_gate(settings, ctx, now=now)
     if gate.decision == GateDecision.BLOCK:
         return None
 

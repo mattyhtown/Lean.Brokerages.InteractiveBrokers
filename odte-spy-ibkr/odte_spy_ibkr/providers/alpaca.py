@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable, Iterator
 
 import httpx
 
@@ -10,6 +11,61 @@ from odte_spy_ibkr.config import Settings
 from odte_spy_ibkr.providers.base import BaseProvider, MarketContext, MarketContextDelta
 
 logger = logging.getLogger(__name__)
+
+MAX_PAGES = 500
+RATE_LIMIT_RETRIES = 3
+
+
+class AlpacaDataError(RuntimeError):
+    """Alpaca Market Data request failed; callers must not cache anything for it."""
+
+
+def alpaca_configured(settings: Settings) -> bool:
+    return bool(settings.alpaca_api_key and settings.alpaca_api_secret)
+
+
+def alpaca_paged_get(
+    settings: Settings,
+    path: str,
+    params: dict[str, Any],
+    *,
+    client: httpx.Client | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Iterator[dict[str, Any]]:
+    """Yield every page of a Market Data GET, following `next_page_token`."""
+    if not alpaca_configured(settings):
+        raise AlpacaDataError("ALPACA_API_KEY / ALPACA_API_SECRET are not set")
+    headers = {
+        "APCA-API-KEY-ID": settings.alpaca_api_key,
+        "APCA-API-SECRET-KEY": settings.alpaca_api_secret,
+    }
+    url = f"{settings.alpaca_data_url.rstrip('/')}{path}"
+    owned = client is None
+    http = client or httpx.Client(timeout=30.0)
+    try:
+        page_token: str | None = None
+        for _ in range(MAX_PAGES):
+            query = dict(params)
+            if page_token:
+                query["page_token"] = page_token
+            for attempt in range(RATE_LIMIT_RETRIES + 1):
+                resp = http.get(url, headers=headers, params=query)
+                if resp.status_code != 429 or attempt == RATE_LIMIT_RETRIES:
+                    break
+                sleep(2.0**attempt)
+            if resp.status_code >= 400:
+                raise AlpacaDataError(f"GET {path} -> HTTP {resp.status_code}: {resp.text[:200]}")
+            payload = resp.json()
+            yield payload
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                return
+        raise AlpacaDataError(f"GET {path} exceeded {MAX_PAGES} pages")
+    except httpx.HTTPError as exc:
+        raise AlpacaDataError(f"GET {path} failed: {exc}") from exc
+    finally:
+        if owned:
+            http.close()
 
 
 class AlpacaProvider(BaseProvider):

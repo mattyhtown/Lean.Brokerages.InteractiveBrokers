@@ -9,6 +9,9 @@ from odte_spy_ibkr.chain.legs import (
     net_call_risk_within_limit,
     select_by_delta_band,
     select_by_otm_distance,
+    spread_intrinsic,
+    spread_mark_from_chain,
+    spread_mid,
     today_expiry,
 )
 from odte_spy_ibkr.chain.skew import ChainSkewSnapshot, build_chain_skew
@@ -26,5 +29,8 @@ __all__ = [
     "net_call_risk_within_limit",
     "select_by_delta_band",
     "select_by_otm_distance",
+    "spread_intrinsic",
+    "spread_mark_from_chain",
+    "spread_mid",
     "today_expiry",
 ]

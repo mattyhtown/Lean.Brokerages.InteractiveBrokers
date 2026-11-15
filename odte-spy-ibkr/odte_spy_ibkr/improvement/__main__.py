@@ -27,8 +27,9 @@ def run_improvement() -> int:
         "best_candidate": best.candidate.name,
         "best_sharpe": best.max_rolling_sharpe,
         "best_drawdown": best.max_drawdown,
-        "best_score": best.score,
+        "best_score": best.score if best.max_rolling_sharpe is not None else None,
         "params": best.candidate.params,
+        "best_sample": getattr(best, "sample", {}),
     }
     write_history(settings.params_history_dir, history_payload)
 

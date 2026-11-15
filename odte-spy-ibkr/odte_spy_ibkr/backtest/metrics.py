@@ -6,12 +6,25 @@ from dataclasses import dataclass
 ANNUALIZATION = math.sqrt(252)
 
 
-def rolling_sharpe_series(
+@dataclass(frozen=True)
+class RollingStat:
+    """Trailing-window statistics of daily returns. `sharpe` is None when std is zero."""
+
+    mean: float
+    std: float
+    sharpe: float | None
+
+
+def rolling_stats_series(
     daily_returns: list[float],
     *,
     window: int,
-) -> list[float | None]:
-    out: list[float | None] = []
+) -> list[RollingStat | None]:
+    """Per day: mean, population std and annualized Sharpe of the trailing `window` returns.
+
+    Entries are None until `window` observations exist.
+    """
+    out: list[RollingStat | None] = []
     for i in range(len(daily_returns)):
         if i + 1 < window:
             out.append(None)
@@ -20,11 +33,17 @@ def rolling_sharpe_series(
         mean = sum(chunk) / window
         var = sum((x - mean) ** 2 for x in chunk) / window
         std = math.sqrt(var)
-        if std <= 1e-12:
-            out.append(None)
-        else:
-            out.append(ANNUALIZATION * mean / std)
+        sharpe = None if std <= 1e-12 else ANNUALIZATION * mean / std
+        out.append(RollingStat(mean=mean, std=std, sharpe=sharpe))
     return out
+
+
+def rolling_sharpe_series(
+    daily_returns: list[float],
+    *,
+    window: int,
+) -> list[float | None]:
+    return [s.sharpe if s else None for s in rolling_stats_series(daily_returns, window=window)]
 
 
 def max_rolling_sharpe(daily_returns: list[float], *, window: int) -> float | None:
@@ -78,8 +97,9 @@ def summarize_backtest(
     *,
     window: int,
     sharpe_target: float,
+    equity_base: float = 100_000.0,
 ) -> BacktestSummary:
-    equity = 100_000.0
+    equity = equity_base
     curve = [equity]
     for pnl in daily_pnl:
         equity += pnl

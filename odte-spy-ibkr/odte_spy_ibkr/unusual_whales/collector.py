@@ -36,7 +36,14 @@ def append_session_snapshot(settings: Settings, *, bundle: dict, collected_at: d
     aggregate_bias = aggregate_flow_bias(bundle)
     daily_cache_path(settings, day).parent.mkdir(parents=True, exist_ok=True)
     daily_cache_path(settings, day).write_text(
-        json.dumps({"date": day.isoformat(), "aggregate_bias": aggregate_bias, "snapshots": _count_jsonl(jsonl)}),
+        json.dumps(
+            {
+                "date": day.isoformat(),
+                "aggregate_bias": aggregate_bias,
+                "snapshots": _count_jsonl(jsonl),
+                "collected_at": collected_at.isoformat(),
+            }
+        ),
         encoding="utf-8",
     )
     return jsonl

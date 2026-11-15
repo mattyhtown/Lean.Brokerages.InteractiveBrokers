@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     poll_interval_sec: float = Field(default=30.0, alias="POLL_INTERVAL_SEC")
     max_net_call_risk: float = Field(default=50_000.0, alias="MAX_NET_CALL_RISK")
     strong_bullish_skew: float = Field(default=0.55, alias="STRONG_BULLISH_SKEW")
+    stop_loss_credit_multiple: float = Field(
+        default=0.0,
+        alias="STOP_LOSS_CREDIT_MULTIPLE",
+        description="Stop when the spread mark reaches this multiple of the entry credit; 0 disables.",
+    )
 
     # Unusual Whales
     unusual_whales_api_key: str = Field(default="", alias="UNUSUAL_WHALES_API_KEY")
@@ -125,6 +130,7 @@ class Settings(BaseSettings):
     macro_flow_conflict: MacroFlowConflict = Field(default=MacroFlowConflict.DOWNSIZE, alias="MACRO_FLOW_CONFLICT")
     macro_backtest_mode: MacroBacktestMode = Field(default=MacroBacktestMode.PERMISSIVE, alias="MACRO_BACKTEST_MODE")
     macro_calendar_path: str = Field(default="config/macro_events.yaml", alias="MACRO_CALENDAR_PATH")
+    macro_headline_refresh_sec: float = Field(default=120.0, alias="MACRO_HEADLINE_REFRESH_SEC")
     context_api_key: str = Field(default="", alias="CONTEXT_API_KEY")
 
     # Sharpe gate (live)
@@ -146,6 +152,13 @@ class Settings(BaseSettings):
     uw_session_jsonl_dir: str = Field(default="data/cache/uw/sessions", alias="UW_SESSION_JSONL_DIR")
     backtest_walk_forward_train_days: int = Field(default=60, alias="BACKTEST_WALK_FORWARD_TRAIN_DAYS")
     backtest_walk_forward_test_days: int = Field(default=20, alias="BACKTEST_WALK_FORWARD_TEST_DAYS")
+    backtest_require_sharpe_pass: bool = Field(default=False, alias="BACKTEST_REQUIRE_SHARPE_PASS")
+    backtest_decision_interval_min: int = Field(default=5, alias="BACKTEST_DECISION_INTERVAL_MIN")
+    backtest_strike_range: int = Field(default=15, alias="BACKTEST_STRIKE_RANGE")
+    backtest_snapshot_time: time = Field(default=time(11, 0), alias="BACKTEST_SNAPSHOT_TIME")
+    backtest_mark_max_age_min: int = Field(default=5, alias="BACKTEST_MARK_MAX_AGE_MIN")
+    backtest_quote_half_spread: float = Field(default=0.01, alias="BACKTEST_QUOTE_HALF_SPREAD")
+    backtest_stock_feed: str = Field(default="sip", alias="BACKTEST_STOCK_FEED")
     providers_backtest_enabled: str = Field(
         default="alpaca,unusual_whales,macro_news",
         alias="PROVIDERS_BACKTEST_ENABLED",
@@ -166,6 +179,10 @@ class Settings(BaseSettings):
     @property
     def providers_enabled_set(self) -> set[str]:
         return set(self.providers_enabled_list)
+
+    @property
+    def providers_backtest_enabled_set(self) -> set[str]:
+        return {p.strip().lower() for p in self.providers_backtest_enabled.split(",") if p.strip()}
 
     @property
     def coinbase_products_list(self) -> list[str]:
@@ -193,6 +210,11 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return v.lower().strip()
         return v
+
+    @field_validator("backtest_snapshot_time", mode="before")
+    @classmethod
+    def _snapshot_time_field(cls, v: Any) -> time:
+        return _parse_time(v)
 
     def apply_yaml(self, path: str | Path) -> None:
         p = Path(path)
@@ -227,6 +249,7 @@ class Settings(BaseSettings):
                 "entry_cutoff": "entry_cutoff",
                 "flatten_time": "flatten_time",
                 "poll_interval_sec": "poll_interval_sec",
+                "stop_loss_credit_multiple": "stop_loss_credit_multiple",
             },
             "unusual_whales": {
                 "base_url": "uw_base_url",
@@ -236,9 +259,12 @@ class Settings(BaseSettings):
                 "poll_interval_sec": "uw_poll_interval_sec",
                 "cache_ttl_sec": "uw_cache_ttl_sec",
                 "stale_block_sec": "uw_stale_block_sec",
+                "backtest_cache_dir": "uw_backtest_cache_dir",
+                "backtest_mode": "uw_backtest_mode",
             },
             "providers": {
                 "enabled": "providers_enabled",
+                "backtest_enabled": "providers_backtest_enabled",
             },
             "alpaca": {
                 "api_key": "alpaca_api_key",
@@ -258,6 +284,7 @@ class Settings(BaseSettings):
                 "size_scale_under_macro_stress": "macro_size_scale_under_stress",
                 "flow_conflict": "macro_flow_conflict",
                 "backtest_mode": "macro_backtest_mode",
+                "calendar_path": "macro_calendar_path",
             },
             "backtest": {
                 "equity_base": "backtest_equity_base",
@@ -265,18 +292,26 @@ class Settings(BaseSettings):
                 "sharpe_target": "backtest_sharpe_target",
                 "slippage_ticks": "backtest_slippage_ticks",
                 "commission_per_contract": "backtest_commission_per_contract",
+                "cache_dir": "backtest_cache_dir",
+                "require_sharpe_pass": "backtest_require_sharpe_pass",
+                "decision_interval_min": "backtest_decision_interval_min",
+                "walk_forward_train_days": "backtest_walk_forward_train_days",
+                "walk_forward_test_days": "backtest_walk_forward_test_days",
             },
             "risk": {
                 "sharpe_gate_enabled": "sharpe_gate_enabled",
                 "sharpe_min": "sharpe_min",
                 "sharpe_window_days": "sharpe_window_days",
+                "sharpe_min_obs": "sharpe_min_obs",
+                "journal_path": "journal_path",
             },
         }
         for section, keys in mapping.items():
             block = data.get(section) or {}
             for yaml_key, attr in keys.items():
                 if yaml_key in block and block[yaml_key] is not None:
-                    object.__setattr__(self, attr, block[yaml_key])
+                    # Validate like env input so "15:00" becomes a time and "put" an enum.
+                    self.__pydantic_validator__.validate_assignment(self, attr, block[yaml_key])
 
     @property
     def orders_allowed(self) -> bool:
@@ -285,9 +320,9 @@ class Settings(BaseSettings):
         )
 
 
-def load_settings() -> Settings:
+def load_settings(config_path: str | Path | None = None) -> Settings:
     settings = Settings()
-    yaml_path = settings.config_yaml or os.environ.get("CONFIG_YAML", "")
+    yaml_path = str(config_path or "") or settings.config_yaml or os.environ.get("CONFIG_YAML", "")
     if not yaml_path:
         candidate = Path("config.yaml")
         if candidate.is_file():

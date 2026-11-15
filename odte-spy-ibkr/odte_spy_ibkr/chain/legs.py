@@ -137,3 +137,38 @@ def net_call_risk_within_limit(
 
 def chain_snapshot_timestamp() -> datetime:
     return datetime.now()
+
+
+def spread_mid(spread: VerticalSpreadSelection) -> float | None:
+    """Mid value of the vertical (short mid minus long mid); None without two-sided marks."""
+    short_mid, long_mid = spread.short_leg.mid, spread.long_leg.mid
+    if short_mid is None or long_mid is None:
+        return None
+    return short_mid - long_mid
+
+
+def spread_intrinsic(spread: VerticalSpreadSelection, spot: float) -> float:
+    """Expiry value of the vertical, i.e. what the short side owes at settlement."""
+
+    def leg(c: OptionCandidate) -> float:
+        return max(0.0, spot - c.strike) if c.right == "C" else max(0.0, c.strike - spot)
+
+    return min(spread.width, max(0.0, leg(spread.short_leg) - leg(spread.long_leg)))
+
+
+def spread_mark_from_chain(
+    spread: VerticalSpreadSelection,
+    candidates: Sequence[OptionCandidate],
+) -> float | None:
+    """Current mid of an open vertical, looked up by strike/right in a fresh chain."""
+
+    def find(leg: OptionCandidate) -> OptionCandidate | None:
+        for c in candidates:
+            if c.right == leg.right and c.strike == leg.strike and c.expiry == leg.expiry:
+                return c
+        return None
+
+    short, long = find(spread.short_leg), find(spread.long_leg)
+    if short is None or long is None or short.mid is None or long.mid is None:
+        return None
+    return min(spread.width, max(0.0, short.mid - long.mid))
