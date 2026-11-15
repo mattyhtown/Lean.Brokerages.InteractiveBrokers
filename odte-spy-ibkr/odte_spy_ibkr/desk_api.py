@@ -110,14 +110,12 @@ def _journal_backtest_window(
 
     wins = 0
     credits: list[float] = []
-    win_pnls: list[float] = []
     equity = 100_000.0
     peak = equity
     max_dd = 0.0
     for _, pnl, credit in window:
         if pnl > 0:
             wins += 1
-            win_pnls.append(pnl)
         if credit is not None and credit > 0:
             credits.append(credit)
         equity += pnl
@@ -127,12 +125,11 @@ def _journal_backtest_window(
 
     trades = len(window)
     win_rate = wins / trades if trades else 0.0
+    # Journal schema is date/pnl/source — only use avgCredit when credit fields exist.
+    # Never substitute daily win PnL (different units) for option credit.
     if credits:
         avg_credit = sum(credits) / len(credits)
         credit_note = "avg_credit"
-    elif win_pnls:
-        avg_credit = sum(win_pnls) / len(win_pnls)
-        credit_note = "avg_win_pnl"
     else:
         avg_credit = min_credit_fallback
         credit_note = "min_credit_fallback"
@@ -260,14 +257,8 @@ def build_desk_state(settings: Settings) -> dict[str, Any]:
             if ctx.spot is None or float(ctx.spot or 0.0) <= 0.0:
                 if "spot_unavailable" not in degraded:
                     degraded.append("spot_unavailable")
-            # Built provider instances that contributed neither notes nor raw payloads
-            for provider in providers:
-                pid = provider.provider_id
-                if pid in (ctx.provider_notes or {}) or pid in (ctx.raw_by_provider or {}):
-                    continue
-                tag = f"{pid}:silent"
-                if tag not in degraded:
-                    degraded.append(tag)
+            # Do not infer "{id}:silent" from missing notes/raw — successful fetches
+            # often only set typed fields (spot/flow) with no note or raw payload.
     except Exception as exc:  # noqa: BLE001
         degraded.append(f"providers:{exc.__class__.__name__}")
         logger.warning("Provider aggregation degraded: %s", exc)
