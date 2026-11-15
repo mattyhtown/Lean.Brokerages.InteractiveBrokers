@@ -1995,9 +1995,12 @@ class FakeFetch:
     def __init__(self, files: dict[str, bytes | LoaderError]) -> None:
         self.files = files
         self.calls: list[tuple[str, int, bool]] = []
+        self.sinks: list[BinaryIO] = []
 
     def __call__(self, url: str, max_bytes: int, sink: BinaryIO | None) -> HttpResponse:
         self.calls.append((url, max_bytes, sink is not None))
+        if sink is not None:
+            self.sinks.append(sink)
         answer = self.files[url]
         if isinstance(answer, LoaderError):
             raise answer
@@ -2043,6 +2046,8 @@ def test_an_episode_without_a_readable_transcript_has_its_audio_transcribed_from
     heard: list[tuple[Path, bytes]] = []
 
     def transcribe(audio: Path) -> Transcript:
+        # Windows will not open the file for the transcriber while the download still holds it open.
+        assert [sink.closed for sink in fetch.sinks] == [True]
         heard.append((audio, audio.read_bytes()))
         return Transcript(" Nvidia beat.\u200b See https://example.com/ad  now. ", "Systran/faster-whisper-small.en")
 
@@ -2053,7 +2058,7 @@ def test_an_episode_without_a_readable_transcript_has_its_audio_transcribed_from
         ("https://audio.example.com/1.mp3", MAX_AUDIO_BYTES, True),
     ]
     ((audio, content),) = heard
-    assert content == b"ID3 audio bytes" and not audio.exists()
+    assert content == b"ID3 audio bytes" and not audio.exists() and not audio.parent.exists()
 
 
 def test_an_episode_that_cannot_become_text_says_why() -> None:
