@@ -52,6 +52,10 @@ class MarketContextAggregator:
 
     def build(self, base: MarketContext | None = None) -> MarketContext:
         ctx = base or MarketContext(underlying=self.underlying)
+        return merge_deltas(ctx, self.fetch_deltas(ctx), self.default_weights)
+
+    def fetch_deltas(self, ctx: MarketContext) -> list[MarketContextDelta]:
+        """One delta per provider that answered or failed; unconfigured ones are skipped."""
         deltas: list[MarketContextDelta] = []
 
         for provider in self.providers:
@@ -70,7 +74,7 @@ class MarketContextAggregator:
                     )
                 )
 
-        return merge_deltas(ctx, deltas, self.default_weights)
+        return deltas
 
     def poll_provider_safe(self, provider_id: str, ctx: MarketContext) -> MarketContextDelta | None:
         for p in self.providers:

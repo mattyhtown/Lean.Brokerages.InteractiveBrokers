@@ -1,0 +1,9 @@
+# Applied to every engine process the agent starts (CONFIG_YAML points here).
+# The engine applies YAML after environment variables and .env, so these
+# values win over anything else on the host.
+ib:
+  paper: true
+safety:
+  live_trading: false
+  read_only: true
+  enable_orders: false

@@ -1,0 +1,19 @@
+{
+  "name": "odte-spy-agent",
+  "private": true,
+  "type": "module",
+  "description": "Hosted agent for the odte_spy_ibkr research, backtest and improvement jobs. No order placement.",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "dev": "agent-sdk dev",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@grok/agent-sdk": "^0.6.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "6.0.3"
+  }
+}

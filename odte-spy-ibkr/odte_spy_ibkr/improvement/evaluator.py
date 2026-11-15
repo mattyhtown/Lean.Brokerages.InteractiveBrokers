@@ -22,9 +22,12 @@ def _apply_params(settings: Settings, params: dict) -> Settings:
     return settings
 
 
+LOOKBACK_DAYS = 120
+
+
 def evaluate_candidate(candidate: ExperimentCandidate, *, end: date | None = None) -> EvaluationResult:
     end = end or date.today()
-    start = end - timedelta(days=120)
+    start = end - timedelta(days=LOOKBACK_DAYS)
     settings = _apply_params(load_settings(), dict(candidate.params))
     # run_backtest logs summary but we need metrics — run simplified internal path
     from odte_spy_ibkr.backtest.calendar import iter_trading_days
