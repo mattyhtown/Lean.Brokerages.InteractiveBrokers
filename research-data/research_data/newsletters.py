@@ -8,6 +8,7 @@ import email.utils
 from html.parser import HTMLParser
 import imaplib
 import re
+import ssl
 import time
 from typing import Callable, Iterator, Protocol
 
@@ -15,6 +16,7 @@ from research_data.http import LoaderError
 from research_data.tickers import Watchlist, extract_tickers
 
 GMAIL_IMAP_HOST = "imap.gmail.com"
+_IMAP_TIMEOUT_SECONDS = 60
 # FinBERT reads at most 512 tokens; passages this short stay well inside that.
 MAX_PASSAGE_CHARS = 800
 
@@ -27,6 +29,7 @@ _URL_RE = re.compile(r"https?://\S+")
 _INVISIBLE_RE = re.compile("[\u00ad\u034f\u200b-\u200f\u2060\ufeff\x00]")
 _SPACES_RE = re.compile(r"[ \t\u00a0]+")
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
 _BLOCK_TAGS = frozenset({"p", "br", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"})
 _SKIPPED_TAGS = frozenset({"script", "style", "head"})
 
@@ -159,14 +162,24 @@ def _fetched_message(uid: str, data: list[object]) -> Newsletter:
     return parse_message(int(message_id.group(1)), received_at, raw)
 
 
+def _connect(host: str) -> ImapConnection:
+    # Without an explicit context imaplib does not check the server's certificate.
+    try:
+        return imaplib.IMAP4_SSL(host, ssl_context=ssl.create_default_context(), timeout=_IMAP_TIMEOUT_SECONDS)
+    except OSError as exc:
+        raise LoaderError(f"Cannot connect to {host}: {exc}") from None
+
+
 def fetch_newsletters(
     address: str,
     app_password: str,
     label: str,
     since: date,
-    connect: Callable[[str], ImapConnection] = imaplib.IMAP4_SSL,
+    connect: Callable[[str], ImapConnection] = _connect,
 ) -> Iterator[Newsletter]:
     """Yield every message under a Gmail label received on or after `since`, without marking it read."""
+    if _CONTROL_CHARACTER_RE.search(label):
+        raise LoaderError(f"Gmail label {label!r} contains a control character")
     connection = connect(GMAIL_IMAP_HOST)
     try:
         try:
@@ -190,6 +203,8 @@ def fetch_newsletters(
             if status != "OK":
                 raise LoaderError(f"Gmail IMAP fetch failed for message UID {uid}")
             yield _fetched_message(uid, data)
+    except (imaplib.IMAP4.abort, OSError) as exc:
+        raise LoaderError(f"Gmail IMAP connection failed: {exc}") from None
     finally:
         try:
             connection.logout()

@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import json
+import ssl
 from typing import Mapping
 import urllib.parse
 
 import pytest
 
-from research_data import cli, local_finbert
+from research_data import cli, local_finbert, newsletters
 from research_data.cli import main as cli_main
 from research_data.http import HttpResponse, LoaderError, require_secure_url
 from research_data.local_finbert import LocalFinbert
@@ -186,6 +187,39 @@ def test_fetch_reads_the_label_read_only_and_keeps_gmail_ids_and_arrival_times()
     ]
 
 
+def test_fetch_refuses_a_label_that_could_carry_a_second_imap_command() -> None:
+    fake = FakeImap({})
+    with pytest.raises(LoaderError, match="contains a control character"):
+        list(fetch_newsletters("me@gmail.com", "pw", "Substack\r\nA1 DELETE INBOX", date(2026, 1, 1), lambda host: fake))
+    assert fake.calls == []
+
+
+def test_fetch_reports_a_stalled_connection_and_still_logs_out() -> None:
+    class Stalled(FakeImap):
+        def uid(self, command: str, *args: str) -> tuple[str, list[object]]:
+            raise TimeoutError("timed out")
+
+    fake = Stalled({})
+    with pytest.raises(LoaderError, match="Gmail IMAP connection failed: timed out"):
+        list(fetch_newsletters("me@gmail.com", "pw", "Substack", date(2026, 1, 1), connect=lambda host: fake))
+    assert fake.calls[-1] == ("logout",)
+
+
+def test_gmail_is_reached_with_a_verified_certificate_and_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[tuple[str, ssl.SSLContext, float]] = []
+
+    def imap4_ssl(host: str, *, ssl_context: ssl.SSLContext, timeout: float) -> FakeImap:
+        opened.append((host, ssl_context, timeout))
+        return FakeImap({})
+
+    monkeypatch.setattr(newsletters.imaplib, "IMAP4_SSL", imap4_ssl)
+    assert list(fetch_newsletters("me@gmail.com", "pw", "Substack", date(2026, 1, 1))) == []
+    ((host, context, timeout),) = opened
+    assert host == "imap.gmail.com"
+    assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+    assert timeout > 0
+
+
 def test_fetch_reports_a_missing_label_and_still_logs_out() -> None:
     fake = FakeImap({}, select_status="NO")
     with pytest.raises(LoaderError, match="Could not open Gmail label 'Substack'"):
@@ -244,6 +278,11 @@ def test_bars_without_a_usable_price_are_dropped_and_counted() -> None:
 def test_bars_in_an_unexpected_shape_are_an_error() -> None:
     with pytest.raises(LoaderError, match="Unexpected Databento ohlcv-1d record"):
         parse_bars(b'{"open":"1","high":"1","low":"1","close":"1","volume":"1"}\n')
+
+
+def test_a_fractional_raw_price_is_an_error_instead_of_being_cut_to_a_whole_number() -> None:
+    with pytest.raises(LoaderError, match="Unexpected Databento ohlcv-1d record"):
+        parse_bars(BARS.replace(b'"close":"134360000000"', b'"close":134360000000.9'))
 
 
 class FakeHttp:
@@ -321,6 +360,8 @@ def test_supabase_client_needs_a_url_and_a_secret_key() -> None:
     client = SupabaseClient.from_env({"SUPABASE_URL": "https://proj.supabase.co/", "SUPABASE_SECRET_KEY": " k "})
     assert (client.url, client.key) == ("https://proj.supabase.co", "k")
     assert require_secure_url("http://127.0.0.1:3000") == "http://127.0.0.1:3000"
+    with pytest.raises(LoaderError, match="user name"):
+        require_secure_url("https://proj.supabase.co@other.example")
 
 
 def test_supabase_upsert_sends_the_key_the_conflict_target_and_the_resolution() -> None:
@@ -363,8 +404,10 @@ class FakeSupabase:
         self.reads = reads or {}
         self.upserts: list[tuple[str, list[dict[str, object]], str, bool]] = []
         self.updates: list[tuple[str, dict[str, str], dict[str, object]]] = []
+        self.selects: list[tuple[str, dict[str, str] | None]] = []
 
     def select(self, table: str, columns: str, order: str, filters=None, limit=None) -> list[dict[str, object]]:
+        self.selects.append((table, filters))
         pages = self.reads.get(table, [])
         return pages.pop(0)[:limit] if pages else []
 
@@ -414,8 +457,9 @@ def test_scoring_saves_each_passage_and_stops_at_the_limit() -> None:
         return Sentiment("ProsusAI/finbert", {"positive": positive, "neutral": 0.05, "negative": 0.95 - positive})
 
     assert score_passages(supabase, score, limit=1) == 1
+    assert supabase.selects == [("newsletter_passages", {"sentiment_label": "is.null"})]
     ((table, filters, values),) = supabase.updates
-    assert (table, filters) == ("newsletter_passages", {"id": "eq.4"})
+    assert (table, filters) == ("newsletter_passages", {"id": "eq.4", "sentiment_label": "is.null"})
     assert values["sentiment_label"] == "positive"
     assert (values["sentiment_positive"], values["sentiment_neutral"]) == (0.9, 0.05)
     assert values["sentiment_negative"] == pytest.approx(0.05)
@@ -506,5 +550,5 @@ def test_cli_scores_locally_without_a_hugging_face_token(
     assert cli_main(["score", "--finbert", "local"]) == 0
     assert capsys.readouterr().out == "score: scored 1 passages with local FinBERT\n"
     ((_, filters, values),) = supabase.updates
-    assert (filters, values["sentiment_label"]) == ({"id": "eq.4"}, "positive")
+    assert (filters["id"], values["sentiment_label"]) == ("eq.4", "positive")
 

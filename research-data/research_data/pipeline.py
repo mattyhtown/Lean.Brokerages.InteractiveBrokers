@@ -95,7 +95,8 @@ def score_passages(supabase: SupabaseClient, score: SentimentScorer, limit: int)
                 raise LoaderError(f"{sentiment.model} returned no score for: {', '.join(missing)}")
             supabase.update(
                 "newsletter_passages",
-                {"id": f"eq.{row['id']}"},
+                # Leaves the row alone if another run scored it in the meantime.
+                {"id": f"eq.{row['id']}", "sentiment_label": "is.null"},
                 {
                     "sentiment_label": max(_SENTIMENT_LABELS, key=lambda label: sentiment.scores[label]),
                     "sentiment_positive": sentiment.scores["positive"],

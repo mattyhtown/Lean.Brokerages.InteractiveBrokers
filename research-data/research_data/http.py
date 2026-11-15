@@ -12,6 +12,12 @@ class LoaderError(Exception):
     pass
 
 
+class HttpStatusError(LoaderError):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 @dataclass(frozen=True)
 class HttpResponse:
     status: int
@@ -37,8 +43,11 @@ def require_secure_url(url: str) -> str:
     """Credentials are sent with every request, so only HTTPS (or HTTP on loopback) is accepted."""
     cleaned = url.strip().rstrip("/")
     parsed = urllib.parse.urlparse(cleaned)
-    if not parsed.netloc or parsed.scheme not in ("https", "http"):
+    if not parsed.hostname or parsed.scheme not in ("https", "http"):
         raise LoaderError(f"Invalid URL: {url!r}")
+    if "@" in parsed.netloc:
+        # In https://trusted.example@other.example the request goes to other.example.
+        raise LoaderError(f"Refusing URL with a user name in it: {url!r}")
     if parsed.scheme == "http" and not _is_loopback(parsed.hostname):
         raise LoaderError(f"Refusing non-HTTPS URL: {url!r}")
     return cleaned
@@ -70,6 +79,6 @@ def send(
             return HttpResponse(response.status, response.read(), response_headers)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace").strip()[:500]
-        raise LoaderError(f"HTTP {exc.code} from {parsed.netloc}{parsed.path}: {detail}") from None
+        raise HttpStatusError(exc.code, f"HTTP {exc.code} from {parsed.netloc}{parsed.path}: {detail}") from None
     except urllib.error.URLError as exc:
         raise LoaderError(f"Request to {parsed.netloc}{parsed.path} failed: {exc.reason}") from None
