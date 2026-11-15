@@ -8,8 +8,13 @@ export default defineTool({
     and credentials are present, spot and flow, the risk, macro, flow and
     Sharpe gates, and the active parameters. Fields that need an IB session
     (net call bias, option chain, entry intent) come back null with a reason.
+    A macro field is null when no provider had anything to read for it, and
+    macro_unavailable_reasons says what was missing. With Alpaca keys the
+    first call of a day fetches that day's headlines and caches them; later
+    calls that day read the cache and see no newer headline.
   `,
-  effect: "read",
+  // The engine's macro_news provider caches the day's headlines once.
+  effect: "idempotent",
   async execute() {
     return signalState();
   },

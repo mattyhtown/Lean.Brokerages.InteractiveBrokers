@@ -10,10 +10,10 @@ export default defineTool({
     it is. decision is the engine's promotion rule applied to that record,
     and qualifiedForPaperPromotion says whether the best challenger cleared
     the Sharpe target and margin (null when the decision could not be read).
-    chainCoverage says which option chains the scores rest on, as in
-    backtest. It covers the holdout sessions the pass scores, not the
-    whole lookback. A challenger scored on substituted chains has not
-    qualified on market evidence.
+    chainCoverage says which prices and option chains the scores rest on,
+    as in backtest. It covers the holdout sessions the pass scores, not the
+    whole lookback. A challenger scored on skipped sessions or substituted
+    chains has not qualified on market evidence.
   `,
   effect: "write",
   async execute() {

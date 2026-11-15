@@ -257,9 +257,11 @@ const COVERAGE = {
   to: "2026-10-21",
   sessions: 20,
   simulated_sessions: 92,
+  no_local_spot_sessions: 3,
+  no_local_spot_handling: "alpaca_daily_bar_or_skipped",
   research_chain_sessions: 5,
   cached_chain_sessions: 2,
-  no_chain_sessions: 13,
+  no_chain_sessions: 10,
   no_chain_substitute: "alpaca_current_snapshot",
 };
 
@@ -409,8 +411,7 @@ function improvementEngine(options: {
         JSON.stringify(options.record ?? {}),
       );
       await options.duringRun?.();
-      // The real CLI prints nothing on a successful run.
-      return {};
+      return { stdout: "No promotion: paper_auto_promote_disabled\n" };
     }
     if (request.args[0] === "--improvement-chain-coverage") {
       return { stdout: `${JSON.stringify(COVERAGE)}\n` };

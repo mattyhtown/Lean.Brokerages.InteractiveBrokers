@@ -139,8 +139,9 @@ function queued<T>(job: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Where the sessions a job scores will get their option chains. Asked before
- * the job, because a backtest caches the chains it fetches. null: not known.
+ * Where the sessions a job scores will get their prices and option chains.
+ * Asked before the job, because a backtest caches what it fetches. null: not
+ * known.
  */
 async function chainCoverage(deps: OperationDeps, args: string[]) {
   const run = await deps.run({ module: "odte_spy_ibkr.hosted_state", args, timeoutMs: 60_000 });
@@ -381,8 +382,8 @@ export function improvementRun(deps = defaultDeps()) {
   return queued(() => runImprovement(deps));
 }
 
-// The engine names a history record by the second and prints nothing, so a
-// record is matched to its run by what changed on disk. That only holds for
+// The engine names a history record by the second and does not print the
+// name, so a record is matched to its run by what changed on disk. That only holds for
 // one run at a time, which the queue gives within this process.
 async function runImprovement(deps: OperationDeps) {
   const historyDir = path.join(deps.engineDir, "params", "history");
@@ -426,8 +427,8 @@ async function runImprovement(deps: OperationDeps) {
     return failure(run, "bad_engine_output", "improvement exited 0 without a new history record");
   }
 
-  // The improvement CLI does not print its decision, so ask the engine's own
-  // promotion rule about the record it just wrote.
+  // The improvement CLI prints its decision as a sentence. For the decision
+  // as data, ask the engine's own promotion rule about the record it wrote.
   const historyPath = path.join(historyDir, historyFile ?? "");
   const check = await deps.run({
     module: "odte_spy_ibkr.hosted_state",
