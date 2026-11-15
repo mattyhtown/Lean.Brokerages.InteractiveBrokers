@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import http.client
 import ipaddress
-from typing import Callable, Mapping
+from typing import BinaryIO, Callable, Mapping
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -82,3 +83,65 @@ def send(
         raise HttpStatusError(exc.code, f"HTTP {exc.code} from {parsed.netloc}{parsed.path}: {detail}") from None
     except urllib.error.URLError as exc:
         raise LoaderError(f"Request to {parsed.netloc}{parsed.path} failed: {exc.reason}") from None
+
+
+_PUBLIC_USER_AGENT = "research-data/0.1"
+_READ_BYTES = 1 << 20
+
+
+def _public_host(url: str) -> str:
+    """The host of an address that `fetch_public` may read. Errors name no more than the host,
+    because the rest of a private feed's address is its password."""
+    parsed = urllib.parse.urlparse(url.strip())
+    host = parsed.hostname
+    if not host or parsed.scheme not in ("https", "http") or "@" in parsed.netloc:
+        raise LoaderError("An address is not a plain web address")
+    if parsed.scheme == "http" and not _is_loopback(host):
+        raise LoaderError(f"The address at {host} is not HTTPS")
+    return host
+
+
+class _SecureRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to an address `fetch_public` would have accepted in the first place."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        _public_host(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_PUBLIC_OPENER = urllib.request.build_opener(_SecureRedirects)
+
+PublicFetch = Callable[[str, int, BinaryIO | None], HttpResponse]
+
+
+def fetch_public(url: str, max_bytes: int, sink: BinaryIO | None = None, timeout_seconds: int = 60) -> HttpResponse:
+    """Read a public address that takes no credentials, following redirects.
+
+    The body is returned, or written to `sink` when one is given. A body longer than
+    `max_bytes` is an error rather than being cut short.
+    """
+    host = _public_host(url)
+    request = urllib.request.Request(url.strip(), headers={"User-Agent": _PUBLIC_USER_AGENT})
+    received = 0
+    chunks: list[bytes] = []
+    try:
+        with _PUBLIC_OPENER.open(request, timeout=timeout_seconds) as response:
+            while chunk := response.read(_READ_BYTES):
+                received += len(chunk)
+                if received > max_bytes:
+                    raise LoaderError(f"The file at {host} is larger than {max_bytes // 1_000_000} MB")
+                if sink is None:
+                    chunks.append(chunk)
+                else:
+                    sink.write(chunk)
+            headers = {name.lower(): value for name, value in response.headers.items()}
+            # A connection that drops partway ends the read without an error.
+            if headers.get("content-length", "").isdigit() and received != int(headers["content-length"]):
+                raise LoaderError(f"Download from {host} stopped after {received} of {headers['content-length']} bytes")
+            return HttpResponse(response.status, b"".join(chunks), headers)
+    except urllib.error.HTTPError as exc:
+        raise HttpStatusError(exc.code, f"HTTP {exc.code} from {host}") from None
+    except urllib.error.URLError as exc:
+        raise LoaderError(f"Request to {host} failed: {exc.reason}") from None
+    except (OSError, http.client.HTTPException) as exc:
+        raise LoaderError(f"Download from {host} failed: {exc or type(exc).__name__}") from None

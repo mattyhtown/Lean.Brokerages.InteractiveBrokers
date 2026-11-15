@@ -15,6 +15,7 @@ from research_data.alphavantage import Article, article_pages
 from research_data.benzinga import Headline, headline_pages
 from research_data.http import LoaderError
 from research_data.local_finbert import LocalFinbert
+from research_data.local_whisper import LocalWhisper, whisper_installed
 from research_data.market_sentiment import fetch_news_sentiment, openbb_installed
 from research_data.news import NewsDigest, fetch_digest
 from research_data.newsletters import fetch_newsletters
@@ -28,14 +29,17 @@ from research_data.pipeline import (
     load_news,
     load_newsletters,
     load_options,
+    load_podcasts,
     load_prices,
     score_passages,
 )
+from research_data.podcasts import Episode, FeedLine, Transcript, episode_transcript, read_feed, read_feed_list
 from research_data.prices import PriceDownload, download_daily_bars
 from research_data.supabase import SupabaseClient
 from research_data.tickers import Watchlist
 
 DEFAULT_WATCHLIST = Path(__file__).resolve().parent.parent / "watchlist.txt"
+DEFAULT_PODCASTS = Path(__file__).resolve().parent.parent / "podcasts.txt"
 _DEFAULT_LOOKBACK_DAYS = 7
 _MARKET_TIME_ZONE = ZoneInfo("America/New_York")
 
@@ -52,6 +56,13 @@ def _read_watchlist(path: Path) -> Watchlist:
         return Watchlist.parse(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise LoaderError(f"Cannot read watchlist {path}: {exc.strerror}") from None
+
+
+def _read_podcast_feeds(path: Path) -> list[FeedLine]:
+    try:
+        return read_feed_list(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise LoaderError(f"Cannot read podcast list {path}: {exc.strerror}") from None
 
 
 def _hosted_finbert(text: str) -> Sentiment:
@@ -155,6 +166,35 @@ def _run_alphavantage(args: argparse.Namespace, env: Mapping[str, str], supabase
         print(f"alphavantage: warning: {warning}", file=sys.stderr)
 
 
+def _run_podcasts(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
+    feeds = _read_podcast_feeds(args.podcasts)
+    if not feeds:
+        raise LoaderError(f"{args.podcasts} lists no podcast feeds")
+    whisper: list[LocalWhisper] = []
+
+    def transcribe(audio: Path) -> Transcript:
+        if not whisper:
+            whisper.append(LocalWhisper())
+        return whisper[0](audio)
+
+    def transcript_of(episode: Episode) -> Transcript | None:
+        def announced(audio: Path) -> Transcript:
+            print(f"podcasts: transcribing {episode.show}: {episode.title}", file=sys.stderr)
+            return transcribe(audio)
+
+        return episode_transcript(episode, announced if whisper_installed() else None)
+
+    loaded = load_podcasts(supabase, feeds, read_feed, transcript_of, _read_watchlist(args.watchlist), args.since)
+    print(
+        f"podcasts: read {len(feeds) - len(loaded.failed_feeds)} of {len(feeds)} feeds, stored {loaded.added} "
+        f"new episodes; {loaded.passages} passages mention a ticker"
+    )
+    for warning in loaded.warnings:
+        print(f"podcasts: warning: {warning}", file=sys.stderr)
+    if loaded.failed_feeds:
+        raise LoaderError("Podcast feeds that could not be read: " + "; ".join(loaded.failed_feeds))
+
+
 def _run_openbb(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
     added, newest = load_market_sentiment(supabase, fetch_news_sentiment)
     through = f", stored through {newest}" if newest else ""
@@ -168,6 +208,7 @@ _STEPS = {
     "news": _run_news,
     "benzinga": _run_benzinga,
     "alphavantage": _run_alphavantage,
+    "podcasts": _run_podcasts,
     "score": _run_score,
     "prices": _run_prices,
     "options": _run_options,
@@ -184,11 +225,13 @@ _OPTIONAL_STEP_SETTINGS = {
 }
 
 
-def _skip_reason(name: str, env: Mapping[str, str]) -> str | None:
+def _skip_reason(name: str, env: Mapping[str, str], args: argparse.Namespace) -> str | None:
     """Why `all` leaves the step out, or None when it runs."""
     setting = _OPTIONAL_STEP_SETTINGS.get(name)
     if setting and not env.get(setting, "").strip():
         return f"{setting} is not set"
+    if name == "podcasts" and not (args.podcasts.is_file() and _read_podcast_feeds(args.podcasts)):
+        return f"{args.podcasts} lists no podcast feeds"
     if name == "openbb" and not openbb_installed():
         return "OpenBB is not installed"
     return None
@@ -198,27 +241,28 @@ def build_parser() -> argparse.ArgumentParser:
     lookback = date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
     parser = argparse.ArgumentParser(
         prog="research-data",
-        description="Load newsletters, news digests, Benzinga headlines, Alpha Vantage news scores, FinBERT "
-        "sentiment, daily prices, options metrics, split and dividend factors and a market news sentiment index "
-        "into Supabase.",
+        description="Load newsletters, news digests, Benzinga headlines, Alpha Vantage news scores, podcast "
+        "transcripts, FinBERT sentiment, daily prices, options metrics, split and dividend factors and a market "
+        "news sentiment index into Supabase.",
     )
     parser.add_argument(
         "step",
         choices=[*_STEPS, "all"],
         help="newsletters: Gmail label to passages; news: today's Perplexity news digest per watchlist symbol; "
         "benzinga: Benzinga headlines per symbol; alphavantage: Alpha Vantage's scored news per symbol; "
-        "score: FinBERT on unscored passages; prices: Databento daily bars; options: ORATS daily options "
-        "metrics; adjustments: split and dividend factors from QuantConnect factor files on this machine; "
+        "podcasts: transcripts of the episodes in the listed podcast feeds; score: FinBERT on unscored "
+        "passages; prices: Databento daily bars; options: ORATS daily options metrics; adjustments: split and dividend factors from QuantConnect factor files on this machine; "
         "openbb: the San Francisco Fed news sentiment index through OpenBB; all: every step in that order, "
-        "leaving out news, benzinga, alphavantage, options and adjustments when their setting is missing and "
-        "openbb when OpenBB is not installed",
+        "leaving out news, benzinga, alphavantage, options and adjustments when their setting is missing, "
+        "podcasts when no feeds are listed and openbb when OpenBB is not installed",
     )
     parser.add_argument("--label", default="Substack", help="Gmail label to read (default: Substack)")
     parser.add_argument(
         "--since",
         type=date.fromisoformat,
         default=lookback,
-        help="Read newsletters received and Benzinga and Alpha Vantage news published on or after this date "
+        help="Read newsletters received and Benzinga news, Alpha Vantage news and podcast episodes published on "
+        "or after this date "
         f"(default: {_DEFAULT_LOOKBACK_DAYS} days ago)",
     )
     parser.add_argument(
@@ -241,6 +285,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_WATCHLIST,
         help="Symbols and company names to look for (default: watchlist.txt next to the package)",
     )
+    parser.add_argument(
+        "--podcasts",
+        type=Path,
+        default=DEFAULT_PODCASTS,
+        help="Podcast feed addresses, one per line (default: podcasts.txt next to the package)",
+    )
     return parser
 
 
@@ -250,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         supabase = SupabaseClient.from_env(env)
         for name in _STEPS if args.step == "all" else [args.step]:
-            reason = _skip_reason(name, env) if args.step == "all" else None
+            reason = _skip_reason(name, env, args) if args.step == "all" else None
             if reason:
                 print(f"{name}: skipped because {reason}", file=sys.stderr)
                 continue

@@ -10,8 +10,9 @@ from research_data.benzinga import Headline
 from research_data.http import LoaderError
 from research_data.market_sentiment import SentimentReading
 from research_data.news import NewsDigest
-from research_data.newsletters import Newsletter, passage_chunks, ticker_passages
+from research_data.newsletters import Newsletter, Passage, passage_chunks, ticker_passages
 from research_data.options import OptionsDay
+from research_data.podcasts import Episode, EpisodeUnavailable, Feed, FeedLine, Transcript, episode_passages
 from research_data.prices import DATASET, PriceDownload
 from research_data.supabase import SupabaseClient, in_filter
 from research_data.tickers import Watchlist
@@ -23,6 +24,8 @@ _UNTAG_BATCH_ROWS = 200
 GMAIL_SOURCE = "gmail"
 PERPLEXITY_SOURCE = "perplexity"
 BENZINGA_SOURCE = "benzinga"
+PODCAST_SOURCE = "podcast"
+_EPISODE_LOOKUP_ROWS = 50
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,54 @@ NewsFetcher = Callable[[str, list[str]], NewsDigest]
 HeadlinePager = Callable[[str, date], Iterable[list[Headline]]]
 ArticlePager = Callable[[str, date], Iterable[list[Article]]]
 MarketSentimentFetcher = Callable[[], list[SentimentReading]]
+FeedReader = Callable[[FeedLine, date], Feed]
+EpisodeTranscriber = Callable[[Episode], Transcript | None]
+
+
+@dataclass(frozen=True)
+class PodcastLoad:
+    # Episodes stored for the first time.
+    added: int
+    # Passages that mention a ticker, in every episode read.
+    passages: int
+    warnings: list[str]
+    # One line for each feed that could not be read.
+    failed_feeds: list[str]
+
+
+def _passage_rows(newsletter_id: str, passages: list[Passage]) -> list[dict[str, object]]:
+    return [
+        {
+            "newsletter_id": newsletter_id,
+            "passage_index": passage.index,
+            "passage_text": passage.text,
+            "tickers": passage.tickers,
+        }
+        for passage in passages
+    ]
+
+
+def _refresh_passages(
+    supabase: SupabaseClient,
+    newsletter_ids: list[str],
+    passage_rows: list[dict[str, object]],
+) -> None:
+    """Store the ticker passages of the given texts, and stop counting stored ones that are no longer among them."""
+    supabase.upsert("newsletter_passages", passage_rows, on_conflict="newsletter_id,passage_index")
+    current = {(row["newsletter_id"], row["passage_index"]) for row in passage_rows}
+    stored = supabase.select(
+        "newsletter_passages",
+        columns="id,newsletter_id,passage_index",
+        order="id.asc",
+        filters={"newsletter_id": in_filter(newsletter_ids), "tickers": "neq.{}"},
+    )
+    stale = [row["id"] for row in stored if (row["newsletter_id"], row["passage_index"]) not in current]
+    for start in range(0, len(stale), _UNTAG_BATCH_ROWS):
+        supabase.update(
+            "newsletter_passages",
+            {"id": in_filter(stale[start : start + _UNTAG_BATCH_ROWS])},
+            {"tickers": []},
+        )
 
 
 def load_newsletters(
@@ -61,24 +112,7 @@ def load_newsletters(
         if not newsletter_rows:
             return
         supabase.upsert("newsletters", newsletter_rows, on_conflict="id", ignore_duplicates=True)
-        supabase.upsert("newsletter_passages", passage_rows, on_conflict="newsletter_id,passage_index")
-        current = {(row["newsletter_id"], row["passage_index"]) for row in passage_rows}
-        stored = supabase.select(
-            "newsletter_passages",
-            columns="id,newsletter_id,passage_index",
-            order="id.asc",
-            filters={
-                "newsletter_id": in_filter(row["id"] for row in newsletter_rows),
-                "tickers": "neq.{}",
-            },
-        )
-        stale = [row["id"] for row in stored if (row["newsletter_id"], row["passage_index"]) not in current]
-        for start in range(0, len(stale), _UNTAG_BATCH_ROWS):
-            supabase.update(
-                "newsletter_passages",
-                {"id": in_filter(stale[start : start + _UNTAG_BATCH_ROWS])},
-                {"tickers": []},
-            )
+        _refresh_passages(supabase, [str(row["id"]) for row in newsletter_rows], passage_rows)
         newsletter_rows.clear()
         passage_rows.clear()
 
@@ -93,16 +127,8 @@ def load_newsletters(
                 "body_text": newsletter.body_text,
             }
         )
-        passages = ticker_passages(newsletter.body_text, watchlist)
-        passage_rows.extend(
-            {
-                "newsletter_id": newsletter.id,
-                "passage_index": passage.index,
-                "passage_text": passage.text,
-                "tickers": passage.tickers,
-            }
-            for passage in passages
-        )
+        passages = _passage_rows(newsletter.id, ticker_passages(newsletter.body_text, watchlist))
+        passage_rows.extend(passages)
         newsletter_count += 1
         passage_count += len(passages)
         if len(newsletter_rows) >= _NEWSLETTER_BATCH_ROWS:
@@ -413,6 +439,82 @@ def load_benzinga(
         who = ", ".join(missing) if len(missing) < len(symbols) else "any symbol"
         warnings.append(f"Benzinga returned no headlines since {since} for {who}")
     return len(symbols), read, warnings
+
+
+def load_podcasts(
+    supabase: SupabaseClient,
+    feeds: list[FeedLine],
+    read_feed: FeedReader,
+    transcript_of: EpisodeTranscriber,
+    watchlist: Watchlist,
+    since: date,
+) -> PodcastLoad:
+    """Store the episodes each feed published since `since` as text, with their ticker passages.
+
+    An episode's text is fetched or transcribed once and saved before the next episode is
+    started. Later runs rebuild its passages from the stored text, which is how an edited
+    watchlist reaches older episodes without transcribing them again. An episode that cannot
+    be read is reported and tried again by the next run, and a feed that cannot be read is
+    reported without stopping the feeds after it.
+    """
+    added = passages = 0
+    warnings: list[str] = []
+    failed_feeds: list[str] = []
+    for feed_line in feeds:
+        try:
+            feed = read_feed(feed_line, since)
+        except LoaderError as exc:
+            failed_feeds.append(f"{feed_line.label}: {exc}")
+            continue
+        show = feed.show or feed_line.label
+        if feed.undated:
+            warnings.append(f"{feed.undated} episodes of {show} have no readable publication time and were left out")
+        stored: dict[str, str] = {}
+        for start in range(0, len(feed.episodes), _EPISODE_LOOKUP_ROWS):
+            ids = [episode.id for episode in feed.episodes[start : start + _EPISODE_LOOKUP_ROWS]]
+            rows = supabase.select("newsletters", columns="id,body_text", order="id.asc", filters={"id": in_filter(ids)})
+            stored.update((str(row["id"]), str(row["body_text"])) for row in rows)
+        untranscribed = 0
+        for episode in feed.episodes:
+            body_text = stored.get(episode.id)
+            if body_text is None:
+                try:
+                    transcript = transcript_of(episode)
+                except EpisodeUnavailable as exc:
+                    warnings.append(f"{show}: {episode.title!r} was left out because {exc}")
+                    continue
+                if transcript is None:
+                    untranscribed += 1
+                    continue
+                supabase.upsert(
+                    "newsletters",
+                    [
+                        {
+                            "id": episode.id,
+                            "source": PODCAST_SOURCE,
+                            "sender": PODCAST_SOURCE,
+                            "publication": feed.show or None,
+                            "subject": episode.title,
+                            "received_at": episode.published_at.isoformat(),
+                            "body_text": transcript.text,
+                            "transcript_source": transcript.source,
+                        }
+                    ],
+                    on_conflict="id",
+                    ignore_duplicates=True,
+                )
+                added += 1
+                body_text = transcript.text
+            rows = _passage_rows(episode.id, episode_passages(body_text, watchlist))
+            _refresh_passages(supabase, [episode.id], rows)
+            passages += len(rows)
+        if untranscribed:
+            warnings.append(
+                f"{untranscribed} episodes of {show} were left out because they have no published transcript "
+                "in plain text, WebVTT or SubRip: `poetry install --extras podcasts` lets this machine "
+                "transcribe their audio"
+            )
+    return PodcastLoad(added, passages, warnings, failed_feeds)
 
 
 def load_alphavantage(

@@ -2,23 +2,29 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import io
 import json
 from pathlib import Path
 import ssl
+import threading
+import time
 from types import SimpleNamespace
-from typing import Mapping
+from typing import BinaryIO, Iterator, Mapping
 import urllib.parse
 import zipfile
 
 import pytest
 
-from research_data import cli, local_finbert, market_sentiment, newsletters
+from research_data import cli, local_finbert, local_whisper, market_sentiment, newsletters
 from research_data.adjustments import FactorRow, FactorSnapshot, parse_factor_file, read_factor_files
 from research_data.alphavantage import Article, SymbolRejected, article_pages, parse_articles
 from research_data.benzinga import Headline, headline_pages, parse_headlines
 from research_data.cli import main as cli_main
-from research_data.http import HttpResponse, HttpStatusError, LoaderError, require_secure_url
+from research_data.http import HttpResponse, HttpStatusError, LoaderError, fetch_public, require_secure_url
 from research_data.local_finbert import LocalFinbert
+from research_data.local_whisper import LocalWhisper
 from research_data.market_sentiment import SentimentReading, fetch_news_sentiment
 from research_data.news import NewsDigest, digest_items, fetch_digest
 from research_data.newsletters import (
@@ -39,8 +45,25 @@ from research_data.pipeline import (
     load_news,
     load_newsletters,
     load_options,
+    load_podcasts,
     load_prices,
     score_passages,
+)
+from research_data.podcasts import (
+    MAX_AUDIO_BYTES,
+    MAX_FEED_BYTES,
+    MAX_TRANSCRIPT_BYTES,
+    Episode,
+    EpisodeUnavailable,
+    Feed,
+    FeedLine,
+    Transcript,
+    episode_passages,
+    episode_transcript,
+    parse_feed,
+    read_feed,
+    read_feed_list,
+    transcript_text,
 )
 from research_data.prices import DailyBar, PriceDownload, download_daily_bars, parse_bars
 from research_data.supabase import SupabaseClient, in_filter
@@ -1538,7 +1561,7 @@ OPTIONAL_SETTINGS = (
 
 
 def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     ran: list[str] = []
     for name in OPTIONAL_SETTINGS:
@@ -1546,12 +1569,23 @@ def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
     monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase()))
     monkeypatch.setattr(cli, "_STEPS", {name: lambda args, env, supabase, name=name: ran.append(name) for name in cli._STEPS})
     monkeypatch.setattr(market_sentiment, "obb", None)
-    assert cli_main(["all"]) == 0
-    assert ran == ["newsletters", "score", "prices"]
+    feeds = tmp_path / "podcasts.txt"
+    feeds.write_text("# no feeds yet\n")
+    assert cli_main(["all", "--podcasts", str(feeds)]) == 0
+    assert cli_main(["all", "--podcasts", str(tmp_path / "missing.txt")]) == 0
+    assert ran == ["newsletters", "score", "prices"] * 2
     assert capsys.readouterr().err == (
         "news: skipped because PERPLEXITY_API_KEY is not set\n"
         "benzinga: skipped because BENZINGA_API_KEY is not set\n"
         "alphavantage: skipped because ALPHAVANTAGE_API_KEY is not set\n"
+        f"podcasts: skipped because {feeds} lists no podcast feeds\n"
+        "options: skipped because ORATS_API_TOKEN is not set\n"
+        "adjustments: skipped because QUANTCONNECT_LEAN_DATA_DIR is not set\n"
+        "openbb: skipped because OpenBB is not installed\n"
+        "news: skipped because PERPLEXITY_API_KEY is not set\n"
+        "benzinga: skipped because BENZINGA_API_KEY is not set\n"
+        "alphavantage: skipped because ALPHAVANTAGE_API_KEY is not set\n"
+        f"podcasts: skipped because {tmp_path / 'missing.txt'} lists no podcast feeds\n"
         "options: skipped because ORATS_API_TOKEN is not set\n"
         "adjustments: skipped because QUANTCONNECT_LEAN_DATA_DIR is not set\n"
         "openbb: skipped because OpenBB is not installed\n"
@@ -1562,13 +1596,15 @@ def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
     monkeypatch.setenv("ORATS_API_TOKEN", "orats-token")
     monkeypatch.setenv("QUANTCONNECT_LEAN_DATA_DIR", "/lean/data")
     monkeypatch.setattr(market_sentiment, "obb", FakeObb([]))
+    feeds.write_text("https://feeds.example.com/show\n")
     ran.clear()
-    assert cli_main(["all"]) == 0
+    assert cli_main(["all", "--podcasts", str(feeds)]) == 0
     assert ran == [
         "newsletters",
         "news",
         "benzinga",
         "alphavantage",
+        "podcasts",
         "score",
         "prices",
         "options",
@@ -1715,3 +1751,651 @@ def test_cli_scores_locally_without_a_hugging_face_token(
     ((_, filters, values),) = supabase.updates
     assert (filters["id"], values["sentiment_label"]) == ("eq.4", "positive")
 
+
+
+def test_a_podcast_list_is_https_feed_addresses_one_per_line() -> None:
+    feeds = read_feed_list(
+        "# shows\n\nhttps://feeds.example.com/private/TOKEN.rss  # paid\n"
+        "  https://other.example.com/show\nhttps://feeds.example.com/private/TOKEN.rss\n"
+    )
+    assert feeds == [
+        FeedLine(3, "https://feeds.example.com/private/TOKEN.rss"),
+        FeedLine(4, "https://other.example.com/show"),
+    ]
+    assert feeds[0].label == "line 3 (feeds.example.com)"
+    assert read_feed_list("# nothing yet\n") == []
+    for bad in ("http://feeds.example.com/show", "feeds.example.com/show", "https://feeds.example.com/a b"):
+        with pytest.raises(LoaderError, match="^Podcast list line 2 is not an https:// feed address$"):
+            read_feed_list(f"# shows\n{bad}\n")
+
+
+def podcast_item(
+    guid: str | None,
+    published: str | None,
+    title: str,
+    audio: str | None = "https://audio.example.com/episode.mp3",
+    transcripts: tuple[tuple[str, str], ...] = (),
+) -> str:
+    parts = [f"<title>{title}</title>", "<description>Notes that mention Apple.</description>"]
+    if guid is not None:
+        parts.append(f'<guid isPermaLink="false">{guid}</guid>')
+    if published is not None:
+        parts.append(f"<pubDate>{published}</pubDate>")
+    if audio is not None:
+        parts.append(f'<enclosure url="{audio}" length="34202926" type="audio/mpeg" />')
+    parts.extend(f'<podcast:transcript url="{url}" type="{kind}" language="en" />' for kind, url in transcripts)
+    return "<item>" + "".join(parts) + "</item>"
+
+
+def podcast_feed(*items: str, title: str = "Odd Lots") -> bytes:
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" '
+        'xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0"><channel>'
+        f"<title>{title}</title><language>en-US</language>" + "".join(items) + "</channel></rss>"
+    ).encode()
+
+
+def episode_id(identity: str) -> str:
+    return "podcast:" + hashlib.sha256(identity.encode()).hexdigest()[:32]
+
+
+def test_a_feed_becomes_its_episodes_since_a_date_oldest_first() -> None:
+    body = podcast_feed(
+        podcast_item(
+            "g-4",
+            "Sat, 14 Nov 2026 09:00:00 +0000",
+            "How Wall Street\n  Is Bracing",
+            "https://audio.example.com/4.mp3?a=1&amp;b=2",
+            (
+                ("application/x-subrip", "https://t.example.com/4.srt2"),
+                ("application/srt", "https://t.example.com/4.srt"),
+                ("text/html", "https://t.example.com/4.html"),
+                ("TEXT/VTT", "https://t.example.com/4.vtt?x=1&amp;y=2"),
+                ("application/json", "https://t.example.com/4.json"),
+                ("text/plain", "https://t.example.com/4.txt"),
+                ("text/plain", "https://t.example.com/4-second.txt"),
+            ),
+        ),
+        podcast_item("g-4", "Sat, 14 Nov 2026 10:00:00 +0000", "The same episode listed again"),
+        podcast_item("g-3", "Thu, 12 Nov 2026 23:30:00 -0500", "Late in New York", None, (("text/html", "https://t/3"),)),
+        podcast_item(None, "Thu, 12 Nov 2026 10:00:00 -0000", "No guid", "https://audio.example.com/no-guid.mp3"),
+        podcast_item("g-2", "Thu, 12 Nov 2026 00:00:00 +0000", "On the first moment of the day"),
+        podcast_item("g-1", "Wed, 11 Nov 2026 23:59:59 +0000", "A second too early"),
+        podcast_item("g-0", "Wed, 11 Nov 2026 20:00:00 -0500", "Already the 12th in UTC"),
+        podcast_item("g-x", None, "No date"),
+        podcast_item("g-y", "soon", "Unreadable date"),
+        podcast_item(None, "Fri, 13 Nov 2026 09:00:00 +0000", "A note with neither guid nor audio", None),
+    )
+    feed = parse_feed(body, date(2026, 11, 12))
+    assert (feed.show, feed.undated) == ("Odd Lots", 2)
+    assert [(episode.title, episode.published_at) for episode in feed.episodes] == [
+        ("On the first moment of the day", datetime(2026, 11, 12, 0, 0, tzinfo=timezone.utc)),
+        ("Already the 12th in UTC", datetime(2026, 11, 12, 1, 0, tzinfo=timezone.utc)),
+        ("No guid", datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc)),
+        ("Late in New York", datetime(2026, 11, 13, 4, 30, tzinfo=timezone.utc)),
+        ("How Wall Street Is Bracing", datetime(2026, 11, 14, 9, 0, tzinfo=timezone.utc)),
+    ]
+    assert feed.episodes[2].published_at.tzinfo is not None
+    assert [episode.id for episode in feed.episodes] == [
+        episode_id("g-2"),
+        episode_id("g-0"),
+        episode_id("https://audio.example.com/no-guid.mp3"),
+        episode_id("g-3"),
+        episode_id("g-4"),
+    ]
+    late, bracing = feed.episodes[3:]
+    assert (late.show, late.audio_url, late.transcript_urls) == ("Odd Lots", None, ())
+    assert bracing.audio_url == "https://audio.example.com/4.mp3?a=1&b=2"
+    assert bracing.transcript_urls == (
+        "https://t.example.com/4.txt",
+        "https://t.example.com/4.vtt?x=1&y=2",
+        "https://t.example.com/4.srt",
+        "https://t.example.com/4.srt2",
+    )
+
+
+def test_an_episode_time_without_a_zone_is_read_as_utc_wherever_the_loader_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    try:
+        feed = parse_feed(podcast_feed(podcast_item("g", "Thu, 12 Nov 2026 10:00:00 -0000", "No zone")), date(2026, 11, 12))
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+    assert [episode.published_at for episode in feed.episodes] == [datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc)]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<html><body>Not found</body></html>",
+        b'<feed xmlns="http://www.w3.org/2005/Atom"><title>An Atom feed</title></feed>',
+        b"<rss><channel><title>Cut off",
+        b'<rss version="2.0"></rss>',
+        b"<channel><item><guid>g</guid></item></channel>",
+        b'<?xml version="1.0"?><!DOCTYPE rss [<!ENTITY a "aaaa">]><rss><channel><title>&a;</title></channel></rss>',
+        b"",
+    ],
+)
+def test_a_page_that_is_not_an_rss_feed_is_an_error(body: bytes) -> None:
+    with pytest.raises(LoaderError, match="^it is not an RSS podcast feed$"):
+        parse_feed(body, date(2026, 11, 12))
+
+
+def test_a_feed_is_read_from_its_address_within_the_feed_size_limit() -> None:
+    fetch = FakeFetch({"https://feeds.example.com/show": podcast_feed(podcast_item("g", "Sat, 14 Nov 2026 09:00:00 +0000", "One"))})
+    feed = read_feed(FeedLine(1, "https://feeds.example.com/show"), date(2026, 11, 12), fetch)
+    assert [episode.title for episode in feed.episodes] == ["One"]
+    assert fetch.calls == [("https://feeds.example.com/show", MAX_FEED_BYTES, False)]
+
+
+# The four shapes below are cut from real published transcripts.
+OMNY_PLAIN = (
+    b"00:00:02\nSpeaker 1: Bloomberg Audio Studios. Podcasts.\n\n00:00:18\n"
+    b"Speaker 3: The NVIDIA story is so fast moving. See https://example.com/x for more.\n\n01:02:03.5\nSpeaker 1: That's right.\n"
+)
+BRACKETED_PLAIN = "\ufeff[00:00:00] Cameron: Welcome to QAV.\r[00:00:25] Tony: I am, yeah.\r[1:02:03] Cameron: At [00:10] we sold.\r".encode()
+WEBVTT = (
+    b"WEBVTT - How Wall Street Is Bracing\n\nNOTE made by a machine\nand not checked\n\n"
+    b"1\n0:00:25.090 --> 0:00:29.870\n<v Speaker 3>Tracy, the NVIDIA story\n\n"
+    b"0:00:30.010 --> 0:00:31.960 align:start\n<v Speaker 3>is so <i>fast</i> moving\nthat we have to be careful.\n\n"
+)
+SUBRIP = (
+    b"1\r\n00:00:00,040 --> 00:00:03,640\r\nWelcome to the Deep Dive. \r\nThis week we are analyzing what \r\n\r\n"
+    b"2\r\n00:00:03,640 --> 00:00:09,760\r\nhappens when a $1.23 \r\ntrillion market\r\n\r\n3\r\n00:00:09,760 --> 00:00:12,080\r\n2026\r\n"
+)
+HEADED_PLAIN = b"Shanaysha Sauls (00:00)\nSo I always go for the simple first.\n\nMarcus Schafer (00:24)\nThis is episode 43.\n"
+
+
+@pytest.mark.parametrize(
+    ("body", "text"),
+    [
+        (
+            OMNY_PLAIN,
+            "Speaker 1: Bloomberg Audio Studios. Podcasts. Speaker 3: The NVIDIA story is so fast moving. "
+            "See for more. Speaker 1: That's right.",
+        ),
+        (BRACKETED_PLAIN, "Cameron: Welcome to QAV. Tony: I am, yeah. Cameron: At [00:10] we sold."),
+        (WEBVTT, "Tracy, the NVIDIA story is so fast moving that we have to be careful."),
+        (SUBRIP, "Welcome to the Deep Dive. This week we are analyzing what happens when a $1.23 trillion market 2026"),
+        (HEADED_PLAIN, "Shanaysha Sauls (00:00) So I always go for the simple first. Marcus Schafer (00:24) This is episode 43."),
+        (b"\xff\xfe not text \x00", "\ufffd\ufffd not text"),
+        (b"00:00:02\n\n[00:10]\n", ""),
+    ],
+)
+def test_a_published_transcript_becomes_one_running_text(body: bytes, text: str) -> None:
+    assert transcript_text(body) == text
+
+
+class FakeFetch:
+    """Serves canned files in place of the public web, and records what was asked for."""
+
+    def __init__(self, files: dict[str, bytes | LoaderError]) -> None:
+        self.files = files
+        self.calls: list[tuple[str, int, bool]] = []
+
+    def __call__(self, url: str, max_bytes: int, sink: BinaryIO | None) -> HttpResponse:
+        self.calls.append((url, max_bytes, sink is not None))
+        answer = self.files[url]
+        if isinstance(answer, LoaderError):
+            raise answer
+        if sink is None:
+            return HttpResponse(200, answer)
+        sink.write(answer)
+        return HttpResponse(200, b"")
+
+
+def an_episode(transcripts: tuple[str, ...] = (), audio: str | None = "https://audio.example.com/1.mp3") -> Episode:
+    published = datetime(2026, 11, 14, 9, 0, tzinfo=timezone.utc)
+    return Episode(episode_id("g-1"), "Odd Lots", "Bracing", published, transcripts, audio)
+
+
+def must_not_transcribe(audio: Path) -> Transcript:
+    raise AssertionError("the audio was transcribed")
+
+
+def test_an_episode_uses_the_first_published_transcript_that_can_be_read() -> None:
+    fetch = FakeFetch(
+        {
+            "https://t.example.com/1.txt": HttpStatusError(404, "HTTP 404 from t.example.com"),
+            "https://t.example.com/1.vtt": b"WEBVTT\n\n",
+            "https://t.example.com/1.srt": SUBRIP,
+            "https://t.example.com/1.srt2": b"never read",
+        }
+    )
+    links = tuple(f"https://t.example.com/1.{kind}" for kind in ("txt", "vtt", "srt", "srt2"))
+    transcript = episode_transcript(an_episode(links), must_not_transcribe, fetch)
+    assert transcript == Transcript(
+        "Welcome to the Deep Dive. This week we are analyzing what happens when a $1.23 trillion market 2026", "publisher"
+    )
+    assert fetch.calls == [(link, MAX_TRANSCRIPT_BYTES, False) for link in links[:3]]
+
+
+def test_an_episode_without_a_readable_transcript_has_its_audio_transcribed_from_a_file_that_is_then_removed() -> None:
+    fetch = FakeFetch(
+        {
+            "https://t.example.com/1.txt": LoaderError("Request to t.example.com failed: timed out"),
+            "https://audio.example.com/1.mp3": b"ID3 audio bytes",
+        }
+    )
+    heard: list[tuple[Path, bytes]] = []
+
+    def transcribe(audio: Path) -> Transcript:
+        heard.append((audio, audio.read_bytes()))
+        return Transcript(" Nvidia beat.\u200b See https://example.com/ad  now. ", "Systran/faster-whisper-small.en")
+
+    transcript = episode_transcript(an_episode(("https://t.example.com/1.txt",)), transcribe, fetch)
+    assert transcript == Transcript("Nvidia beat. See now.", "Systran/faster-whisper-small.en")
+    assert fetch.calls == [
+        ("https://t.example.com/1.txt", MAX_TRANSCRIPT_BYTES, False),
+        ("https://audio.example.com/1.mp3", MAX_AUDIO_BYTES, True),
+    ]
+    ((audio, content),) = heard
+    assert content == b"ID3 audio bytes" and not audio.exists()
+
+
+def test_an_episode_that_cannot_become_text_says_why() -> None:
+    fetch = FakeFetch(
+        {
+            "https://t.example.com/1.txt": HttpStatusError(404, "HTTP 404 from t.example.com"),
+            "https://t.example.com/empty.txt": b"00:00:02\n",
+            "https://audio.example.com/1.mp3": LoaderError("The file at audio.example.com is larger than 1000 MB"),
+            "https://audio.example.com/music.mp3": b"ID3",
+        }
+    )
+    assert episode_transcript(an_episode(), None, fetch) is None
+    assert episode_transcript(an_episode(("https://t.example.com/empty.txt",)), None, fetch) is None
+    assert fetch.calls == [("https://t.example.com/empty.txt", MAX_TRANSCRIPT_BYTES, False)]
+    with pytest.raises(EpisodeUnavailable, match="^its transcript could not be read: HTTP 404 from t.example.com$"):
+        episode_transcript(an_episode(("https://t.example.com/1.txt",)), None, fetch)
+    with pytest.raises(EpisodeUnavailable, match="^it has neither a readable transcript nor audio$"):
+        episode_transcript(an_episode(audio=None), must_not_transcribe, fetch)
+    with pytest.raises(EpisodeUnavailable, match="^its audio could not be downloaded: The file at audio.example.com is larger"):
+        episode_transcript(an_episode(), must_not_transcribe, fetch)
+    with pytest.raises(EpisodeUnavailable, match="^no speech was found in its audio$"):
+        episode_transcript(an_episode(audio="https://audio.example.com/music.mp3"), lambda audio: Transcript(" \u200b ", "m"), fetch)
+
+    def model_missing(audio: Path) -> Transcript:
+        raise LoaderError("Cannot load the model")
+
+    with pytest.raises(LoaderError, match="^Cannot load the model$") as raised:
+        episode_transcript(an_episode(audio="https://audio.example.com/music.mp3"), model_missing, fetch)
+    assert not isinstance(raised.value, EpisodeUnavailable)
+
+
+def test_a_listening_app_named_in_a_transcript_is_not_a_mention_of_its_company() -> None:
+    watchlist = Watchlist.parse("AAPL: Apple\nGOOGL: Google\nAMZN: Amazon\n")
+    text = (
+        "Find the Bloomberg channel on Apple Podcasts and follow. "
+        + "Filler sentence here. " * 40
+        + "We are on Apple Podcasts, Google Podcasts and Amazon Music, and Apple reported today. "
+        + "Filler sentence here. " * 40
+        + "Amazon Music lost subscribers to Amazon Musical and to Google Podcast."
+    )
+    chunks = newsletters.passage_chunks(text)
+    assert len(chunks) == 3
+    assert [(passage.index, passage.tickers) for passage in ticker_passages(text, watchlist)] == [
+        (0, ["AAPL"]),
+        (1, ["AAPL", "AMZN", "GOOGL"]),
+        (2, ["AMZN", "GOOGL"]),
+    ]
+    found = episode_passages(text, watchlist)
+    assert [(passage.index, passage.tickers) for passage in found] == [(1, ["AAPL"]), (2, ["AMZN"])]
+    assert [passage.text for passage in found] == [chunks[1], chunks[2]]
+
+
+def podcast_episodes() -> list[Episode]:
+    return [
+        Episode(episode_id("g-1"), "Odd Lots", "Megaspeed", datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc), (), None),
+        Episode(episode_id("g-2"), "Odd Lots", "Bracing", datetime(2026, 11, 14, 9, 0, tzinfo=timezone.utc), (), None),
+    ]
+
+
+def test_podcast_episodes_are_stored_once_as_text_with_their_ticker_passages() -> None:
+    first, second = podcast_episodes()
+    asked: list[tuple[FeedLine, date]] = []
+    transcripts = {
+        first.id: Transcript("Nobody is named here. Apple and Google both won.", "publisher"),
+        second.id: Transcript("Follow us on Apple Podcasts.", "Systran/faster-whisper-small.en"),
+    }
+
+    def feed_of(feed: FeedLine, since: date) -> Feed:
+        asked.append((feed, since))
+        return Feed("Odd Lots", [first, second], 0)
+
+    supabase = FakeSupabase()
+    line = FeedLine(3, "https://feeds.example.com/private/TOKEN.rss")
+    loaded = load_podcasts(supabase, [line], feed_of, lambda episode: transcripts[episode.id], WATCHLIST, date(2026, 11, 12))
+    assert (loaded.added, loaded.passages, loaded.warnings, loaded.failed_feeds) == (2, 1, [], [])
+    assert asked == [(line, date(2026, 11, 12))]
+    assert supabase.upserts == [
+        (
+            "newsletters",
+            [
+                {
+                    "id": first.id,
+                    "source": "podcast",
+                    "sender": "podcast",
+                    "publication": "Odd Lots",
+                    "subject": "Megaspeed",
+                    "received_at": "2026-11-12T09:00:00+00:00",
+                    "body_text": "Nobody is named here. Apple and Google both won.",
+                    "transcript_source": "publisher",
+                }
+            ],
+            "id",
+            True,
+        ),
+        (
+            "newsletter_passages",
+            [
+                {
+                    "newsletter_id": first.id,
+                    "passage_index": 0,
+                    "passage_text": "Nobody is named here. Apple and Google both won.",
+                    "tickers": ["AAPL", "GOOGL"],
+                }
+            ],
+            "newsletter_id,passage_index",
+            False,
+        ),
+        (
+            "newsletters",
+            [
+                {
+                    "id": second.id,
+                    "source": "podcast",
+                    "sender": "podcast",
+                    "publication": "Odd Lots",
+                    "subject": "Bracing",
+                    "received_at": "2026-11-14T09:00:00+00:00",
+                    "body_text": "Follow us on Apple Podcasts.",
+                    "transcript_source": "Systran/faster-whisper-small.en",
+                }
+            ],
+            "id",
+            True,
+        ),
+        ("newsletter_passages", [], "newsletter_id,passage_index", False),
+    ]
+    assert supabase.selects[0] == ("newsletters", {"id": in_filter([first.id, second.id])})
+    assert "TOKEN" not in repr(supabase.upserts)
+
+
+def test_a_stored_episode_is_not_transcribed_again_and_follows_the_watchlist() -> None:
+    first, second = podcast_episodes()
+    stored_text = "Tesla slid. " + "Filler sentence here. " * 40 + "Apple won."
+    assert len(stored_text) > MAX_PASSAGE_CHARS
+    supabase = FakeSupabase(
+        {
+            "newsletters": [[{"id": first.id, "body_text": stored_text}]],
+            "newsletter_passages": [
+                [
+                    {"id": 7, "newsletter_id": first.id, "passage_index": 0},
+                    {"id": 8, "newsletter_id": first.id, "passage_index": 1},
+                ]
+            ],
+        }
+    )
+    transcribed: list[str] = []
+
+    def transcript_of(episode: Episode) -> Transcript:
+        transcribed.append(episode.id)
+        return Transcript("Nvidia beat.", "publisher")
+
+    watchlist = Watchlist.parse("AAPL: Apple\nNVDA: Nvidia\n")
+    loaded = load_podcasts(
+        supabase, [FeedLine(1, "https://f.example.com/a")], lambda feed, since: Feed("Odd Lots", [first, second], 0),
+        transcript_of, watchlist, date(2026, 11, 12),
+    )
+    assert transcribed == [second.id]
+    assert (loaded.added, loaded.passages) == (1, 2)
+    assert [(table, [row.get("tickers", row.get("id")) for row in rows]) for table, rows, _, _ in supabase.upserts] == [
+        ("newsletter_passages", [["AAPL"]]),
+        ("newsletters", [second.id]),
+        ("newsletter_passages", [["NVDA"]]),
+    ]
+    assert supabase.upserts[0][1][0]["passage_index"] == 1
+    # The stored passage about Tesla, which the watchlist no longer names, stops counting.
+    assert supabase.updates == [("newsletter_passages", {"id": 'in.("7")'}, {"tickers": []})]
+
+
+def test_stored_episodes_are_looked_up_fifty_at_a_time() -> None:
+    episodes = [
+        Episode(episode_id(f"g-{number}"), "Show", f"Episode {number}", datetime(2026, 11, 12, tzinfo=timezone.utc), (), None)
+        for number in range(51)
+    ]
+    supabase = FakeSupabase(
+        {"newsletters": [[], [{"id": episodes[50].id, "body_text": "Apple won."}]]}
+    )
+    loaded = load_podcasts(
+        supabase, [FeedLine(1, "https://f.example.com/a")], lambda feed, since: Feed("Show", episodes, 0),
+        lambda episode: None, WATCHLIST, date(2026, 11, 12),
+    )
+    lookups = [filters for table, filters in supabase.selects if table == "newsletters"]
+    assert lookups == [{"id": in_filter(e.id for e in episodes[:50])}, {"id": in_filter([episodes[50].id])}]
+    assert (loaded.added, loaded.passages) == (0, 1)
+    assert loaded.warnings == [
+        "50 episodes of Show were left out because they have no published transcript in plain text, WebVTT or "
+        "SubRip: `poetry install --extras podcasts` lets this machine transcribe their audio"
+    ]
+
+
+def test_an_unreadable_episode_or_feed_does_not_stop_the_ones_after_it() -> None:
+    first, second = podcast_episodes()
+    other = Episode(episode_id("g-9"), "", "Untitled show's episode", datetime(2026, 11, 13, tzinfo=timezone.utc), (), None)
+
+    def feed_of(feed: FeedLine, since: date) -> Feed:
+        if feed.line == 2:
+            raise HttpStatusError(404, "HTTP 404 from gone.example.com")
+        return Feed("Odd Lots", [first, second], 3) if feed.line == 1 else Feed("", [other], 0)
+
+    def transcript_of(episode: Episode) -> Transcript | None:
+        if episode.id == first.id:
+            raise EpisodeUnavailable("its audio could not be downloaded: HTTP 403 from audio.example.com")
+        return Transcript("Apple won.", "publisher")
+
+    supabase = FakeSupabase()
+    feeds = [
+        FeedLine(1, "https://f.example.com/a"),
+        FeedLine(2, "https://gone.example.com/private/TOKEN"),
+        FeedLine(5, "https://f.example.com/b"),
+    ]
+    loaded = load_podcasts(supabase, feeds, feed_of, transcript_of, WATCHLIST, date(2026, 11, 12))
+    assert (loaded.added, loaded.passages) == (2, 2)
+    assert loaded.failed_feeds == ["line 2 (gone.example.com): HTTP 404 from gone.example.com"]
+    assert loaded.warnings == [
+        "3 episodes of Odd Lots have no readable publication time and were left out",
+        "Odd Lots: 'Megaspeed' was left out because its audio could not be downloaded: HTTP 403 from audio.example.com",
+    ]
+    stored = [rows[0] for table, rows, _, _ in supabase.upserts if table == "newsletters"]
+    assert [(row["id"], row["publication"]) for row in stored] == [(second.id, "Odd Lots"), (other.id, None)]
+
+    def broken(episode: Episode) -> Transcript:
+        raise LoaderError("Cannot load the model")
+
+    with pytest.raises(LoaderError, match="^Cannot load the model$"):
+        load_podcasts(FakeSupabase(), feeds, feed_of, broken, WATCHLIST, date(2026, 11, 12))
+
+
+class PublicSite(BaseHTTPRequestHandler):
+    """A stand-in for the public web that `fetch_public` reads through the real HTTP layer."""
+
+    agents: list[str | None] = []
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+    def do_GET(self) -> None:
+        self.agents.append(self.headers.get("User-Agent"))
+        port = self.server.server_address[1]
+        redirects = {
+            "/moved": "/file",
+            "/hop": f"http://127.0.0.1:{port}/moved",
+            "/away": "http://media.example.com/private-token/audio.mp3",
+            "/odd": "ftp://media.example.com/audio.mp3",
+        }
+        if self.path in redirects:
+            self.send_response(302)
+            self.send_header("Location", redirects[self.path])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if self.path == "/file" or self.path == "/cut":
+            body = b"x" * 3000
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body[:1000] if self.path == "/cut" else body)
+            return
+        self.send_response(404)
+        self.send_header("Content-Length", "9")
+        self.end_headers()
+        self.wfile.write(b"not here\n")
+
+
+@pytest.fixture
+def public_site() -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PublicSite)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    PublicSite.agents.clear()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def test_a_public_file_is_read_through_redirects_into_memory_or_a_file(public_site: str) -> None:
+    response = fetch_public(f"{public_site}/hop", 3000)
+    assert (response.status, response.body, response.headers["content-type"]) == (200, b"x" * 3000, "audio/mpeg")
+    assert PublicSite.agents == ["research-data/0.1"] * 3
+    sink = io.BytesIO()
+    assert fetch_public(f" {public_site}/file\n", 3000, sink).body == b""
+    assert sink.getvalue() == b"x" * 3000
+
+
+def test_a_public_file_that_is_too_large_or_cut_short_is_an_error(public_site: str) -> None:
+    sink = io.BytesIO()
+    with pytest.raises(LoaderError, match="^The file at 127.0.0.1 is larger than 0 MB$"):
+        fetch_public(f"{public_site}/file", 2999, sink)
+    assert len(sink.getvalue()) < 3000
+    with pytest.raises(LoaderError, match="^Download from 127.0.0.1 stopped after 1000 of 3000 bytes$"):
+        fetch_public(f"{public_site}/cut", 3000)
+
+
+def test_public_download_errors_name_the_host_and_never_the_rest_of_the_address(public_site: str) -> None:
+    with pytest.raises(HttpStatusError, match="^HTTP 404 from 127.0.0.1$") as missing:
+        fetch_public(f"{public_site}/private-token/feed.rss", 3000)
+    assert missing.value.status == 404
+    with pytest.raises(LoaderError, match="^The address at media.example.com is not HTTPS$"):
+        fetch_public(f"{public_site}/away", 3000)
+    with pytest.raises(LoaderError, match="^An address is not a plain web address$"):
+        fetch_public(f"{public_site}/odd", 3000)
+    with pytest.raises(LoaderError, match="^The address at feeds.example.com is not HTTPS$"):
+        fetch_public("http://feeds.example.com/private-token/feed.rss", 3000)
+    for address in ("ftp://feeds.example.com/private-token", "https://user@feeds.example.com/private-token", "feed.rss", ""):
+        with pytest.raises(LoaderError, match="^An address is not a plain web address$"):
+            fetch_public(address, 3000)
+    closed = ThreadingHTTPServer(("127.0.0.1", 0), PublicSite)
+    port = closed.server_address[1]
+    closed.server_close()
+    with pytest.raises(LoaderError, match="^Request to 127.0.0.1 failed: ") as refused:
+        fetch_public(f"http://127.0.0.1:{port}/private-token/feed.rss", 3000)
+    assert "private-token" not in str(refused.value)
+
+
+def test_cli_stores_podcast_episodes_and_fails_after_loading_when_a_feed_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    first, second = podcast_episodes()
+    feeds = tmp_path / "podcasts.txt"
+    feeds.write_text("https://f.example.com/a\n# https://f.example.com/off\nhttps://gone.example.com/private/TOKEN\n")
+    watchlist = tmp_path / "watchlist.txt"
+    watchlist.write_text("AAPL: Apple\n")
+    supabase = FakeSupabase()
+    asked: list[tuple[str, date]] = []
+    models: list[str] = []
+
+    def feed_of(feed: FeedLine, since: date) -> Feed:
+        asked.append((feed.url, since))
+        if "gone" in feed.url:
+            raise HttpStatusError(404, "HTTP 404 from gone.example.com")
+        return Feed("Odd Lots", [first, second], 1)
+
+    def transcript_of(episode: Episode, transcribe: object) -> Transcript | None:
+        return transcribe(tmp_path / "audio") if episode.id == first.id or transcribe else None  # type: ignore[operator]
+
+    def loaded_model() -> object:
+        models.append("loaded")
+        return lambda audio: Transcript(f"Apple won, said {audio.name}.", "Systran/faster-whisper-small.en")
+
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: supabase))
+    monkeypatch.setattr(cli, "read_feed", feed_of)
+    monkeypatch.setattr(cli, "episode_transcript", transcript_of)
+    monkeypatch.setattr(cli, "whisper_installed", lambda: True)
+    monkeypatch.setattr(cli, "LocalWhisper", loaded_model)
+    argv = ["podcasts", "--since", "2026-11-12", "--podcasts", str(feeds), "--watchlist", str(watchlist)]
+    assert cli_main(argv) == 1
+    captured = capsys.readouterr()
+    assert captured.out == "podcasts: read 1 of 2 feeds, stored 2 new episodes; 2 passages mention a ticker\n"
+    assert captured.err == (
+        "podcasts: transcribing Odd Lots: Megaspeed\n"
+        "podcasts: transcribing Odd Lots: Bracing\n"
+        "podcasts: warning: 1 episodes of Odd Lots have no readable publication time and were left out\n"
+        "research-data: Podcast feeds that could not be read: line 3 (gone.example.com): HTTP 404 from gone.example.com\n"
+    )
+    assert "TOKEN" not in captured.out + captured.err
+    assert asked == [
+        ("https://f.example.com/a", date(2026, 11, 12)),
+        ("https://gone.example.com/private/TOKEN", date(2026, 11, 12)),
+    ]
+    assert models == ["loaded"]
+    stored = [rows[0] for table, rows, _, _ in supabase.upserts if table == "newsletters"]
+    assert [row["body_text"] for row in stored] == ["Apple won, said audio."] * 2
+
+    # Without faster-whisper there is nothing to transcribe with, and the model is never loaded.
+    monkeypatch.setattr(cli, "whisper_installed", lambda: False)
+    monkeypatch.setattr(cli, "episode_transcript", lambda episode, transcribe: None if transcribe is None else 1 / 0)
+    feeds.write_text("https://f.example.com/a\n")
+    assert cli_main(argv) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "podcasts: read 1 of 1 feeds, stored 0 new episodes; 0 passages mention a ticker\n"
+    assert "2 episodes of Odd Lots were left out because they have no published transcript" in captured.err
+    assert models == ["loaded"]
+
+
+def test_the_podcasts_step_needs_a_list_with_at_least_one_feed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli.SupabaseClient, "from_env", classmethod(lambda cls, env: FakeSupabase()))
+    feeds = tmp_path / "podcasts.txt"
+    assert cli_main(["podcasts", "--podcasts", str(feeds)]) == 1
+    assert capsys.readouterr().err == f"research-data: Cannot read podcast list {feeds}: No such file or directory\n"
+    feeds.write_text("# https://f.example.com/off\n")
+    assert cli_main(["podcasts", "--podcasts", str(feeds)]) == 1
+    assert capsys.readouterr().err == f"research-data: {feeds} lists no podcast feeds\n"
+    feeds.write_text("http://f.example.com/a\n")
+    assert cli_main(["podcasts", "--podcasts", str(feeds)]) == 1
+    assert capsys.readouterr().err == "research-data: Podcast list line 1 is not an https:// feed address\n"
+
+
+def test_the_podcast_list_shipped_with_the_package_follows_no_feed_until_one_is_chosen() -> None:
+    assert read_feed_list(cli.DEFAULT_PODCASTS.read_text(encoding="utf-8")) == []
+
+
+def test_local_whisper_names_the_extra_to_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(local_whisper, "WhisperModel", None)
+    assert not local_whisper.whisper_installed()
+    with pytest.raises(LoaderError, match="run `poetry install --extras podcasts`"):
+        LocalWhisper()
+
+
+@pytest.mark.skipif(not local_whisper.whisper_installed(), reason="needs the podcasts extra; downloads the model on first use")
+def test_local_whisper_reports_audio_it_cannot_decode_as_one_unavailable_episode(tmp_path: Path) -> None:
+    audio = tmp_path / "episode.audio"
+    audio.write_bytes(b"<html>Not found</html>" * 100)
+    with pytest.raises(EpisodeUnavailable, match="^its audio could not be decoded: Invalid data found when processing input$"):
+        LocalWhisper()(audio)

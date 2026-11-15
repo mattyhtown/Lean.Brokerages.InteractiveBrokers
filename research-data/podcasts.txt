@@ -1,0 +1,10 @@
+# One podcast feed address (RSS, https) per line. The `podcasts` step stores each episode's
+# transcript: the publisher's when the feed links one, otherwise the audio transcribed on this
+# machine once `poetry install --extras podcasts` has been run.
+#
+# A private feed address (a paid Substack or Patreon feed) works as a password. Keep a list
+# with one outside the repository and pass it with `--podcasts PATH`.
+#
+# Examples; remove the leading `# ` to follow one:
+# https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/podcast.rss  # Odd Lots, publishes transcripts
+# https://feeds.megaphone.fm/TCP6464651487  # Animal Spirits, audio only
