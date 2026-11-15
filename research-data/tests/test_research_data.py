@@ -14,6 +14,7 @@ import pytest
 
 from research_data import cli, local_finbert, market_sentiment, newsletters
 from research_data.adjustments import FactorRow, FactorSnapshot, parse_factor_file, read_factor_files
+from research_data.alphavantage import Article, SymbolRejected, article_pages, parse_articles
 from research_data.benzinga import Headline, headline_pages, parse_headlines
 from research_data.cli import main as cli_main
 from research_data.http import HttpResponse, HttpStatusError, LoaderError, require_secure_url
@@ -32,6 +33,7 @@ from research_data.options import OptionsDay, download_day, parse_cores
 from research_data.pipeline import (
     Sentiment,
     load_adjustments,
+    load_alphavantage,
     load_benzinga,
     load_market_sentiment,
     load_news,
@@ -1085,6 +1087,299 @@ def test_benzinga_with_no_headlines_at_all_is_reported_in_one_line() -> None:
     assert result == (3, 0, ["Benzinga returned no headlines since 2026-11-03 for any symbol"])
 
 
+# Shaped like an article in a real NEWS_SENTIMENT answer: scores are strings, the time is UTC without a zone.
+def alphavantage_article(
+    number: int, published: str, scores: dict[str, tuple[str, str]], title: str = "Apple  hits\n record\x00 "
+) -> dict[str, object]:
+    return {
+        "title": title,
+        "url": f"https://www.benzinga.com/markets/tech/26/11/{number}/apple",
+        "time_published": published,
+        "authors": ["Mohd Haider"],
+        "summary": "Apple shares rose.",
+        "source": "Benzinga",
+        "category_within_source": "General",
+        "source_domain": "Benzinga",
+        "topics": [{"topic": "technology", "relevance_score": "0.931289"}],
+        "overall_sentiment_score": 0.249936,
+        "overall_sentiment_label": "Somewhat-Bullish",
+        "ticker_sentiment": [
+            {
+                "ticker": ticker,
+                "relevance_score": relevance,
+                "ticker_sentiment_score": sentiment,
+                "ticker_sentiment_label": "Neutral",
+            }
+            for ticker, (relevance, sentiment) in scores.items()
+        ],
+    }
+
+
+def alphavantage_page(*articles: dict[str, object]) -> HttpResponse:
+    body = {
+        "items": str(len(articles)),
+        "sentiment_score_definition": "x <= -0.35: Bearish; x >= 0.35: Bullish",
+        "relevance_score_definition": "0 < x <= 1, with a higher score indicating higher relevance.",
+        "feed": list(articles),
+    }
+    return HttpResponse(200, json.dumps(body).encode())
+
+
+def alphavantage_message(key: str, text: str) -> HttpResponse:
+    return HttpResponse(200, json.dumps({key: text}).encode())
+
+
+def test_alphavantage_articles_carry_the_scores_of_the_asked_symbol_and_a_utc_time() -> None:
+    page = alphavantage_page(
+        alphavantage_article(1, "20261115T120130", {"AAPL": ("1.000000", "0.308468"), "NVDA": ("0.900222", "0.136632")}),
+        alphavantage_article(2, "20261115T1202", {"NVDA": ("0.5", "-0.2")}),
+        {**alphavantage_article(3, "20261115T120300", {"AAPL": ("0.00589", "-0.386928")}, title=""), "source": " "},
+    )
+    assert parse_articles(page.body, "AAPL") == [
+        Article(
+            "https://www.benzinga.com/markets/tech/26/11/1/apple",
+            datetime(2026, 11, 15, 12, 1, 30, tzinfo=timezone.utc),
+            "Apple hits record",
+            "Benzinga",
+            1.0,
+            0.308468,
+        ),
+        Article(
+            "https://www.benzinga.com/markets/tech/26/11/3/apple",
+            datetime(2026, 11, 15, 12, 3, tzinfo=timezone.utc),
+            "",
+            None,
+            0.00589,
+            -0.386928,
+        ),
+    ]
+    (nvidia, minute_only) = parse_articles(page.body, "NVDA")
+    assert (nvidia.relevance, nvidia.sentiment) == (0.900222, 0.136632)
+    assert minute_only.published_at == datetime(2026, 11, 15, 12, 2, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<html>",
+        b"[]",
+        b'{"items": "0"}',
+        json.dumps({"feed": [{**alphavantage_article(1, "20261115T120130", {}), "url": " "}]}).encode(),
+        json.dumps({"feed": [{**alphavantage_article(1, "20261115T120130", {}), "title": None}]}).encode(),
+        json.dumps({"feed": [{**alphavantage_article(1, "20261115T120130", {}), "source": 0}]}).encode(),
+        json.dumps({"feed": [alphavantage_article(1, "2026-11-15 12:01:30", {})]}).encode(),
+        json.dumps({"feed": [alphavantage_article(1, "20261115T120130", {"AAPL": ("high", "0.1")})]}).encode(),
+        json.dumps({"feed": [alphavantage_article(1, "20261115T120130", {"AAPL": ("0.5", "NaN")})]}).encode(),
+        json.dumps({"feed": [alphavantage_article(1, "20261115T120130", {"AAPL": (True, "0.1")})]}).encode(),
+        json.dumps({"feed": [alphavantage_article(1, "20261115T120130", {"AAPL": ("0.5", "Infinity")})]}).encode(),
+        json.dumps({"feed": ["AAPL"]}).encode(),
+    ],
+)
+def test_an_alphavantage_response_in_an_unexpected_shape_is_an_error(body: bytes) -> None:
+    with pytest.raises(LoaderError, match="Unexpected Alpha Vantage"):
+        parse_articles(body, "AAPL")
+
+
+def test_alphavantage_news_is_paged_oldest_first_from_the_minute_of_the_newest_article_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("research_data.alphavantage.SHORTEST_PAGE", 3)
+    scores = {"BRK.B": ("0.5", "0.1")}
+    first = [
+        alphavantage_article(1, "20261102T093000", scores),
+        alphavantage_article(2, "20261103T101500", {"AAPL": ("0.5", "0.1")}),
+        alphavantage_article(3, "20261103T101559", scores),
+    ]
+    second = [first[2], alphavantage_article(4, "20261104T080000", scores)]
+    http = FakeHttp([alphavantage_page(*first), alphavantage_page(*second)])
+    pages = list(article_pages("av-key", "BRK.B", date(2026, 11, 2), http))
+    assert [[article.url.split("/")[-2] for article in page] for page in pages] == [["1", "3"], ["4"]]
+    queries = [urllib.parse.parse_qs(urllib.parse.urlparse(url).query) for _, url, _, _ in http.calls]
+    assert queries[0] == {
+        "function": ["NEWS_SENTIMENT"],
+        "tickers": ["BRK.B"],
+        "time_from": ["20261102T0000"],
+        "sort": ["EARLIEST"],
+        "limit": ["1000"],
+        "apikey": ["av-key"],
+    }
+    assert queries[1] == {**queries[0], "time_from": ["20261103T1015"]}
+    assert all(
+        (method, url.split("?")[0], headers, body) == ("GET", "https://www.alphavantage.co/query", {}, None)
+        for method, url, headers, body in http.calls
+    )
+
+
+def test_alphavantage_stops_at_a_response_too_short_to_have_been_cut_off() -> None:
+    scores = {"AAPL": ("0.5", "0.1")}
+
+    def articles(count: int) -> list[dict[str, object]]:
+        return [alphavantage_article(number, f"202611{2 + number // 60:02d}T09{number % 60:02d}00", scores) for number in range(count)]
+
+    http = FakeHttp([alphavantage_page(*articles(49))])
+    assert [len(page) for page in article_pages("av-key", "AAPL", date(2026, 11, 2), http)] == [49]
+    assert len(http.calls) == 1
+
+    # 50 is what the API sends when it applies its default limit, so there may be more.
+    http = FakeHttp([alphavantage_page(*articles(50)), alphavantage_page(*articles(50)[-1:])])
+    assert [len(page) for page in article_pages("av-key", "AAPL", date(2026, 11, 2), http)] == [50]
+    assert "time_from=20261102T0949" in http.calls[1][1] and len(http.calls) == 2
+
+
+def test_alphavantage_articles_sent_newest_first_are_an_error_when_more_may_follow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scores = {"AAPL": ("0.5", "0.1")}
+    newest_first = [alphavantage_article(2, "20261104T080000", scores), alphavantage_article(1, "20261103T080000", scores)]
+    pages = article_pages("av-key", "AAPL", date(2026, 11, 2), FakeHttp([alphavantage_page(*newest_first)]))
+    assert [[article.url.split("/")[-2] for article in page] for page in pages] == [["2", "1"]]
+
+    monkeypatch.setattr("research_data.alphavantage.SHORTEST_PAGE", 2)
+    http = FakeHttp([alphavantage_page(*newest_first)])
+    with pytest.raises(LoaderError) as raised:
+        list(article_pages("av-key", "AAPL", date(2026, 11, 2), http))
+    assert str(raised.value) == "Alpha Vantage did not send the AAPL articles oldest first"
+    same_minute = [alphavantage_article(1, "20261104T080030", scores), alphavantage_article(2, "20261104T080000", scores)]
+    http = FakeHttp([alphavantage_page(*same_minute), alphavantage_page(same_minute[0])])
+    with pytest.raises(LoaderError, match="oldest first"):
+        list(article_pages("av-key", "AAPL", date(2026, 11, 2), http))
+
+
+def test_alphavantage_without_articles_is_an_empty_feed_or_a_no_articles_message() -> None:
+    since = date(2026, 11, 2)
+    assert list(article_pages("av-key", "AAPL", since, FakeHttp([alphavantage_page()]))) == []
+    no_articles = alphavantage_message("Information", "No articles found. Please adjust the time range.")
+    assert list(article_pages("av-key", "AAPL", since, FakeHttp([no_articles]))) == []
+    unscored = alphavantage_page(alphavantage_article(1, "20261102T093000", {"NVDA": ("0.5", "0.1")}))
+    assert list(article_pages("av-key", "AAPL", since, FakeHttp([unscored]))) == []
+
+
+@pytest.mark.parametrize(
+    ("key", "text", "error", "message"),
+    [
+        (
+            "Information",
+            "Thank you for using Alpha Vantage! This is a premium endpoint.",
+            LoaderError,
+            "Alpha Vantage refused the AAPL request: Thank you for using Alpha Vantage! This is a premium endpoint.",
+        ),
+        (
+            "Note",
+            "We have detected your API key as av-key and our standard API rate limit is 25 requests per day.",
+            LoaderError,
+            "Alpha Vantage refused the AAPL request: We have detected your API key as [key] and our standard API "
+            "rate limit is 25 requests per day.",
+        ),
+        (
+            "Error Message",
+            "the parameter apikey is invalid or missing.",
+            LoaderError,
+            "Alpha Vantage refused the AAPL request: the parameter apikey is invalid or missing.",
+        ),
+        (
+            "Information",
+            "Invalid inputs. Please refer to the API documentation and try again (apikey av-key).",
+            SymbolRejected,
+            "Alpha Vantage rejected the AAPL request: Invalid inputs. Please refer to the API documentation and "
+            "try again (apikey [key]).",
+        ),
+    ],
+)
+def test_an_alphavantage_refusal_stops_the_download_without_showing_the_key(
+    key: str, text: str, error: type[LoaderError], message: str
+) -> None:
+    with pytest.raises(LoaderError) as raised:
+        list(article_pages("av-key", "AAPL", date(2026, 11, 2), FakeHttp([alphavantage_message(key, text)])))
+    assert type(raised.value) is error
+    assert str(raised.value) == message
+
+
+def test_an_alphavantage_http_error_does_not_show_the_key() -> None:
+    error = HttpStatusError(403, "HTTP 403 from www.alphavantage.co/query: forbidden for av-key")
+    with pytest.raises(LoaderError) as raised:
+        list(article_pages("av-key", "AAPL", date(2026, 11, 2), FakeHttp([error])))
+    assert str(raised.value) == "HTTP 403 from www.alphavantage.co/query: forbidden for [key]"
+
+
+def test_alphavantage_paging_that_does_not_advance_is_an_error_instead_of_an_endless_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("research_data.alphavantage.SHORTEST_PAGE", 2)
+    scores = {"AAPL": ("0.5", "0.1")}
+    full = alphavantage_page(*(alphavantage_article(number, "20261103T101500", scores) for number in (1, 2)))
+    with pytest.raises(LoaderError, match="same 2 AAPL articles again from 2026-11-03 10:15 UTC"):
+        list(article_pages("av-key", "AAPL", date(2026, 11, 2), FakeHttp([full, full])))
+
+    monkeypatch.setattr("research_data.alphavantage.MAX_PAGES", 2)
+    more = alphavantage_page(*(alphavantage_article(number, "20261104T101500", scores) for number in (3, 4)))
+    http = FakeHttp([full, more])
+    with pytest.raises(LoaderError, match="more than 2 pages of AAPL articles since 2026-11-02"):
+        list(article_pages("av-key", "AAPL", date(2026, 11, 2), http))
+    assert len(http.calls) == 2
+
+
+def test_alphavantage_articles_are_stored_per_symbol_as_first_seen_for_watchlist_and_mentioned_symbols() -> None:
+    supabase = FakeSupabase({"mentioned_tickers": [[{"symbol": "TSLA"}]]})
+    published = datetime(2026, 11, 10, 14, 30, tzinfo=timezone.utc)
+    apple = Article("https://example.com/a", published, "Apple and Nvidia extend chip deal", "Benzinga", 0.9, 0.31)
+    nvidia = Article("https://example.com/a", published, "Apple and Nvidia extend chip deal", "Benzinga", 0.4, -0.12)
+    later = Article("https://example.com/b", published + timedelta(hours=1), "Apple hits record", None, 0.2, 0.5)
+    asked: list[tuple[str, date]] = []
+
+    def pages(symbol: str, since: date) -> list[list[Article]]:
+        asked.append((symbol, since))
+        if symbol == "TSLA":
+            raise SymbolRejected("Alpha Vantage rejected the TSLA request: Invalid inputs.")
+        return {"AAPL": [[apple, later]], "NVDA": [[nvidia]]}.get(symbol, [])
+
+    result = load_alphavantage(supabase, pages, WATCHLIST, date(2026, 11, 3))
+    assert result == (
+        4,
+        3,
+        [
+            "Alpha Vantage rejected the TSLA request: Invalid inputs.",
+            "Alpha Vantage returned no articles since 2026-11-03 for GOOGL",
+        ],
+    )
+    assert asked == [(symbol, date(2026, 11, 3)) for symbol in ("AAPL", "GOOGL", "NVDA", "TSLA")]
+    assert [(table, conflict, ignore) for table, _, conflict, ignore in supabase.upserts] == [
+        ("alphavantage_news", "symbol,url", True)
+    ] * 2
+    stored = {
+        "symbol": "AAPL",
+        "url": "https://example.com/a",
+        "published_at": "2026-11-10T14:30:00+00:00",
+        "title": "Apple and Nvidia extend chip deal",
+        "source": "Benzinga",
+        "relevance": 0.9,
+        "sentiment": 0.31,
+    }
+    assert supabase.upserts[0][1] == [
+        stored,
+        {
+            "symbol": "AAPL",
+            "url": "https://example.com/b",
+            "published_at": "2026-11-10T15:30:00+00:00",
+            "title": "Apple hits record",
+            "source": None,
+            "relevance": 0.2,
+            "sentiment": 0.5,
+        },
+    ]
+    assert supabase.upserts[1][1] == [{**stored, "symbol": "NVDA", "relevance": 0.4, "sentiment": -0.12}]
+
+
+def test_alphavantage_with_no_articles_or_every_symbol_rejected_is_reported_once() -> None:
+    result = load_alphavantage(FakeSupabase(), lambda symbol, since: [], WATCHLIST, date(2026, 11, 3))
+    assert result == (3, 0, ["Alpha Vantage returned no articles since 2026-11-03 for any symbol"])
+
+    def rejected(symbol: str, since: date) -> list[list[Article]]:
+        raise SymbolRejected(f"Alpha Vantage rejected the {symbol} request: Invalid inputs.")
+
+    with pytest.raises(SymbolRejected, match="rejected the NVDA request"):
+        load_alphavantage(FakeSupabase(), rejected, WATCHLIST, date(2026, 11, 3))
+
+
 class FakeObb:
     """Stands in for `openbb.obb` with the result shape of the San Francisco Fed news sentiment call."""
 
@@ -1173,7 +1468,13 @@ def test_market_sentiment_adds_only_days_newer_than_the_stored_ones() -> None:
     assert load_market_sentiment(FakeSupabase(), lambda: []) == (0, None)
 
 
-OPTIONAL_SETTINGS = ("PERPLEXITY_API_KEY", "BENZINGA_API_KEY", "ORATS_API_TOKEN", "QUANTCONNECT_LEAN_DATA_DIR")
+OPTIONAL_SETTINGS = (
+    "PERPLEXITY_API_KEY",
+    "BENZINGA_API_KEY",
+    "ALPHAVANTAGE_API_KEY",
+    "ORATS_API_TOKEN",
+    "QUANTCONNECT_LEAN_DATA_DIR",
+)
 
 
 def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
@@ -1190,18 +1491,30 @@ def test_all_leaves_out_the_optional_steps_whose_setting_is_missing(
     assert capsys.readouterr().err == (
         "news: skipped because PERPLEXITY_API_KEY is not set\n"
         "benzinga: skipped because BENZINGA_API_KEY is not set\n"
+        "alphavantage: skipped because ALPHAVANTAGE_API_KEY is not set\n"
         "options: skipped because ORATS_API_TOKEN is not set\n"
         "adjustments: skipped because QUANTCONNECT_LEAN_DATA_DIR is not set\n"
         "openbb: skipped because OpenBB is not installed\n"
     )
     monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-key")
     monkeypatch.setenv("BENZINGA_API_KEY", "bz-key")
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "av-key")
     monkeypatch.setenv("ORATS_API_TOKEN", "orats-token")
     monkeypatch.setenv("QUANTCONNECT_LEAN_DATA_DIR", "/lean/data")
     monkeypatch.setattr(market_sentiment, "obb", FakeObb([]))
     ran.clear()
     assert cli_main(["all"]) == 0
-    assert ran == ["newsletters", "news", "benzinga", "score", "prices", "options", "adjustments", "openbb"]
+    assert ran == [
+        "newsletters",
+        "news",
+        "benzinga",
+        "alphavantage",
+        "score",
+        "prices",
+        "options",
+        "adjustments",
+        "openbb",
+    ]
     assert capsys.readouterr().err == ""
 
 
@@ -1219,6 +1532,8 @@ def test_a_step_run_by_name_reports_its_missing_setting(
     assert "research-data: Missing QUANTCONNECT_LEAN_DATA_DIR" in capsys.readouterr().err
     assert cli_main(["benzinga"]) == 1
     assert "research-data: Missing BENZINGA_API_KEY" in capsys.readouterr().err
+    assert cli_main(["alphavantage"]) == 1
+    assert "research-data: Missing ALPHAVANTAGE_API_KEY" in capsys.readouterr().err
     monkeypatch.setattr(market_sentiment, "obb", None)
     assert cli_main(["openbb"]) == 1
     assert "research-data: The openbb step needs OpenBB's Federal Reserve extension" in capsys.readouterr().err
@@ -1245,6 +1560,21 @@ def test_cli_loads_benzinga_headlines_since_the_given_date_and_the_market_index(
     assert captured.out == "benzinga: read 1 headlines for 2 symbols since 2026-11-03\n"
     assert captured.err == "benzinga: warning: Benzinga returned no headlines since 2026-11-03 for NVDA\n"
     assert asked == [("bz-key", "AAPL", date(2026, 11, 3)), ("bz-key", "NVDA", date(2026, 11, 3))]
+
+    def articles(api_key: str, symbol: str, since: date) -> list[list[Article]]:
+        asked.append((api_key, symbol, since))
+        published = datetime(2026, 11, 10, 14, 30, tzinfo=timezone.utc)
+        return [[Article("https://example.com/a", published, "Apple hits record", "Benzinga", 0.9, 0.31)]] * (symbol == "AAPL")
+
+    asked.clear()
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", " av-key ")
+    monkeypatch.setattr(cli, "article_pages", articles)
+    assert cli_main(["alphavantage", "--since", "2026-11-03", "--watchlist", str(watchlist)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "alphavantage: read 1 scored articles for 2 symbols since 2026-11-03\n"
+    assert captured.err == "alphavantage: warning: Alpha Vantage returned no articles since 2026-11-03 for NVDA\n"
+    assert asked == [("av-key", "AAPL", date(2026, 11, 3)), ("av-key", "NVDA", date(2026, 11, 3))]
+    assert supabase.upserts[-1][0] == "alphavantage_news"
 
     monkeypatch.setattr(cli, "fetch_news_sentiment", lambda: [SentimentReading(date(2026, 11, 8), 0.09)])
     assert cli_main(["openbb"]) == 0
