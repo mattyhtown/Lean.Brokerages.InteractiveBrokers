@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 import email.utils
 import json
 from typing import Iterator
@@ -11,6 +11,9 @@ from research_data.http import HttpCallable, HttpStatusError, LoaderError, send
 
 BENZINGA_URL = "https://api.benzinga.com/api/v2/news"
 PAGE_SIZE = 100
+# Benzinga refuses page offsets past a limit, so after this many pages the download starts
+# again at page 0 from the date it has reached.
+WINDOW_PAGES = 50
 MAX_PAGES = 1000
 _TIMEOUT_SECONDS = 120
 _NO_DATA = "no_data_found"
@@ -61,14 +64,20 @@ def headline_pages(
     """Download Benzinga's headlines about `symbol` published on or after `since`, a page at a time.
 
     Oldest first, so headlines published during the download land on the last page instead of
-    shifting the pages already read.
+    shifting the pages already read. A long download is read in stretches of `WINDOW_PAGES`
+    pages, each starting again from the day before the newest headline read so far; the
+    headlines that day shares with the stretch before are dropped.
     """
     seen: set[str] = set()
-    for page in range(MAX_PAGES):
+    start = since
+    page = 0
+    # True while a new stretch is still re-reading headlines of the stretch before.
+    overlapping = False
+    for _ in range(MAX_PAGES):
         query = {
             "token": token,
             "tickers": symbol,
-            "dateFrom": since.isoformat(),
+            "dateFrom": start.isoformat(),
             "displayOutput": "headline",
             "sort": "created:asc",
             "pageSize": PAGE_SIZE,
@@ -89,15 +98,28 @@ def headline_pages(
             raise
         articles = parse_headlines(response.body)
         new = [article for article in articles if article.id not in seen]
-        if articles and not new:
+        if articles and not new and not overlapping:
             raise LoaderError(f"Benzinga sent the same {symbol} headlines for page {page} as for an earlier page")
+        if new:
+            overlapping = False
         seen.update(article.id for article in new)
         titled = [article for article in new if article.title]
         if titled:
             yield titled
         if len(articles) < PAGE_SIZE:
             return
+        page += 1
+        if page == WINDOW_PAGES:
+            newest = max(article.created_at for article in articles)
+            # A day early in UTC is on or before the newest headline's date in any time zone.
+            restart = max(start, newest.astimezone(timezone.utc).date() - timedelta(days=1))
+            if restart == start:
+                raise LoaderError(
+                    f"Benzinga has more than {WINDOW_PAGES * PAGE_SIZE} {symbol} headlines within two days "
+                    f"of {start}, which cannot be paged through"
+                )
+            start, page, overlapping = restart, 0, True
     raise LoaderError(
-        f"Benzinga has more than {MAX_PAGES * PAGE_SIZE} {symbol} headlines since {since}: "
+        f"Benzinga needed more than {MAX_PAGES} requests for the {symbol} headlines since {since}: "
         "load the rest with a later --since"
     )
