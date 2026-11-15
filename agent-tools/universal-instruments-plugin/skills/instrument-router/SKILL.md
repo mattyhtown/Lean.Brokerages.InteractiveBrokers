@@ -40,7 +40,21 @@ description: Route research and trades to the right MCP by asset class (equities
 | US crypto futures | `Coinbase` `FUTURE`, `GLOBAL_PERP` | — |
 | Kalshi events / book | `prediction-markets` `list_kalshi_markets`, `get_kalshi_orderbook` | — |
 | Polymarket events / book | `prediction-markets` `list_polymarket_markets`, `get_polymarket_orderbook` | — |
-| Fundamentals | `Sp-global`, `Daloopa` | — |
+
+## Research data routing
+
+Status as checked on 2026-11-15. Re-check a namespace before relying on it.
+
+| User need | Route | Status and limits |
+|-----------|-------|-------------------|
+| LEAPS | `Alpaca-trading` `get_option_contracts` or `get_option_chain` with `expiration_date_gte` set about a year out | Works. `get_option_contracts` defaults `expiration_date_lte` to the next weekend, so a date filter is required to see long-dated contracts. |
+| Short availability | `Alpaca-trading` `get_asset` | Works. Returns `shortable`, `easy_to_borrow`, `borrow_status`, `margin_requirement_short`. |
+| Short interest, borrow fee, days to cover | None | No connected source. |
+| Fundamentals | `Sp-global`, `Daloopa` | Both need authentication; no tools until connected. |
+| Earnings dates and results | None | No connected source. `Alpaca-trading` `get_news` gives headlines only; `get_corporate_actions` covers dividends, splits and mergers, not earnings. |
+| Macro series (rates, CPI, GDP, jobs) | None | No connected source. `You-finance` needs authentication. |
+| Macro proxies | `Alpaca-trading` `get_index_latest_values` (SPX, VIX), `get_fixed_income_latest_quotes` (Treasury ISINs); `prediction-markets` Kalshi event markets | Market-implied only, not the underlying economic releases. |
+| Cited web research | `You-research` | Works. A synthesized answer with sources, not a structured data feed. |
 
 ## MCP health
 

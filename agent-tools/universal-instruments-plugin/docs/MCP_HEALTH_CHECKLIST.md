@@ -12,6 +12,9 @@ Use this after connecting or reconnecting brokers in **Cursor → Settings → T
 | **Coinbase** | Trading tools listed | `coinbase_balance` or `coinbase_products_list` |
 | **ORATS** | Tools discovered (not empty namespace) | Reconnect if discovery failed |
 | **Kraken** | Tools discovered | Reconnect if discovery failed |
+| **Sp-global** | Authenticated | Needed for fundamentals; shows `needsAuth` until connected |
+| **Daloopa** | Authenticated | Needed for fundamentals and earnings detail; shows `needsAuth` until connected |
+| **You-finance** | Authenticated | Shows `needsAuth` until connected |
 | **prediction-markets** (this plugin) | `list_kalshi_markets`, `list_polymarket_markets` | No secrets for read-only Gamma/Kalshi public APIs |
 | **ib-lean-bridge** (this plugin) | `ping`, `get_historical_bars` | Requires TWS/IB Gateway + env vars |
 
