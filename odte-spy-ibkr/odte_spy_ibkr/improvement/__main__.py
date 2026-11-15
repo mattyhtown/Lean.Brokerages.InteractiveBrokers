@@ -34,9 +34,11 @@ def run_improvement() -> int:
 
     decision = should_promote(settings, active, best)
     if decision.promoted:
-        active.setdefault("strategy", {}).update(
-            {k: v for k, v in best.candidate.params.items() if k in active.get("strategy", {}) or True}
-        )
+        for key, value in best.candidate.params.items():
+            if key.startswith("macro_"):
+                active.setdefault("macro", {})[key.removeprefix("macro_")] = value
+            else:
+                active.setdefault("strategy", {})[key] = value
         active["metrics"] = {
             "sharpe_rolling": best.max_rolling_sharpe,
             "max_drawdown": best.max_drawdown,

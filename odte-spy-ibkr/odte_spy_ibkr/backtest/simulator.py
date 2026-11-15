@@ -28,6 +28,8 @@ def simulate_day(
 ) -> tuple[float, OpenPosition | None, bool]:
     skew = build_chain_skew(candidates, expiry=today_expiry(day), spot=spot, as_of=datetime.combine(day, datetime.min.time()))
     ctx = build_backtest_context(settings, day=day, spot=spot, chain_skew=skew)
+    if ctx is None:
+        return 0.0, open_position, False
 
     pnl = 0.0
     traded = False

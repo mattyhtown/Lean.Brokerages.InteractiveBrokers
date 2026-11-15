@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from odte_spy_ibkr.config import MacroFlowConflict, Settings
+from odte_spy_ibkr.config import CreditSide, MacroFlowConflict, Settings
 from odte_spy_ibkr.providers.base import FlowBias, MarketContext
+from odte_spy_ibkr.strategy.flow_gate import resolved_credit_side
 
 
 class MacroDecision(str, Enum):
@@ -46,6 +47,13 @@ def evaluate_macro_gate(settings: Settings, ctx: MarketContext) -> MacroGateResu
             "macro_risk_off",
             settings.macro_size_scale_under_stress,
         )
+
+    side = resolved_credit_side(settings.credit_side, ctx)
+    if ctx.macro_headline_score < -0.5 and side == CreditSide.PUT:
+        if settings.macro_flow_conflict == MacroFlowConflict.BLOCK and ctx.flow_bias != FlowBias.BEARISH:
+            return MacroGateResult(MacroDecision.BLOCK, "bearish_macro_vs_put_credit", 0.0)
+        if settings.macro_flow_conflict == MacroFlowConflict.DOWNSIZE:
+            return MacroGateResult(MacroDecision.DOWNSIZE, "bearish_macro_vs_put_credit", settings.macro_size_scale_under_stress)
 
     if (
         ctx.macro_headline_score < -0.5

@@ -39,7 +39,9 @@ def evaluate_candidate(candidate: ExperimentCandidate, *, end: date | None = Non
     open_pos: OpenPosition | None = None
     wins: list[bool] = []
     for day in days:
-        spot = 450.0
+        from odte_spy_ibkr.backtest.spot_loader import load_spot_for_day
+
+        spot = load_spot_for_day(settings, ticker=settings.underlying, day=day)
         chain = load_chain_for_day(settings, ticker=settings.underlying, day=day, spot=spot)
         pnl, open_pos, traded = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
         ledger.record(day, pnl)

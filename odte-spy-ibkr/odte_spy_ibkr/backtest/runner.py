@@ -8,6 +8,7 @@ from pathlib import Path
 
 from odte_spy_ibkr.backtest.calendar import iter_trading_days
 from odte_spy_ibkr.backtest.data_loader import load_chain_for_day
+from odte_spy_ibkr.backtest.spot_loader import load_spot_for_day
 from odte_spy_ibkr.backtest.ledger import DailyLedger
 from odte_spy_ibkr.backtest.metrics import summarize_backtest
 from odte_spy_ibkr.backtest.simulator import simulate_day
@@ -32,7 +33,7 @@ def run_backtest(
     trade_wins: list[bool] = []
 
     for day in days:
-        spot = 450.0
+        spot = load_spot_for_day(settings, ticker=settings.underlying, day=day)
         chain = load_chain_for_day(settings, ticker=settings.underlying, day=day, spot=spot)
         pnl, open_pos, traded = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
         ledger.record(day, pnl)

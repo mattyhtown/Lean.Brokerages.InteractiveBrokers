@@ -18,6 +18,8 @@ def default_search_space() -> dict[str, list[Any]]:
         "short_delta_min": [0.08, 0.10, 0.12],
         "short_delta_max": [0.18, 0.20, 0.22],
         "uw_min_strength": [0.25, 0.35, 0.45],
+        "macro_tier1_blackout_before_min": [20, 30, 45],
+        "macro_size_scale_under_stress": [0.5, 0.75, 1.0],
     }
 
 

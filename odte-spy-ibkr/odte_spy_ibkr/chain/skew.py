@@ -20,6 +20,10 @@ class ChainSkewSnapshot:
     net_call_bias: float
     delta_bucket_call: float
     delta_bucket_put: float
+    gamma_proxy_call: float = 0.0
+    gamma_proxy_put: float = 0.0
+    vega_proxy_call: float = 0.0
+    vega_proxy_put: float = 0.0
 
     def to_dict(self) -> dict[str, float | str]:
         return {
@@ -45,11 +49,13 @@ def _weight(candidate: OptionCandidate, *, prefer_oi: bool) -> float:
     return 1.0
 
 
-def _side_metrics(rows: Sequence[OptionCandidate], *, prefer_oi: bool) -> tuple[float, float, float, float]:
+def _side_metrics(rows: Sequence[OptionCandidate], *, prefer_oi: bool) -> tuple[float, float, float, float, float, float]:
     volume = 0.0
     oi = 0.0
     premium = 0.0
     delta_bucket = 0.0
+    gamma_proxy = 0.0
+    vega_proxy = 0.0
     for c in rows:
         w = _weight(c, prefer_oi=prefer_oi)
         volume += float(c.volume or 0)
@@ -57,8 +63,11 @@ def _side_metrics(rows: Sequence[OptionCandidate], *, prefer_oi: bool) -> tuple[
         mid = c.mid or 0.0
         premium += mid * w
         if c.delta is not None:
-            delta_bucket += abs(c.delta) * w
-    return volume, oi, premium, delta_bucket
+            d = abs(c.delta)
+            delta_bucket += d * w
+            gamma_proxy += (1.0 - d) * w
+            vega_proxy += mid * w
+    return volume, oi, premium, delta_bucket, gamma_proxy, vega_proxy
 
 
 def build_chain_skew(
@@ -74,8 +83,8 @@ def build_chain_skew(
     calls = [c for c in rows if c.right == "C"]
     puts = [c for c in rows if c.right == "P"]
 
-    cv, coi, cprem, cdelta = _side_metrics(calls, prefer_oi=prefer_oi)
-    pv, poi, pprem, pdelta = _side_metrics(puts, prefer_oi=prefer_oi)
+    cv, coi, cprem, cdelta, cgamma, cvega = _side_metrics(calls, prefer_oi=prefer_oi)
+    pv, poi, pprem, pdelta, pgamma, pvega = _side_metrics(puts, prefer_oi=prefer_oi)
 
     numerators = [cprem, cv, coi]
     denominators = [pprem, pv, poi]
@@ -104,4 +113,8 @@ def build_chain_skew(
         net_call_bias=net_call_bias,
         delta_bucket_call=cdelta,
         delta_bucket_put=pdelta,
+        gamma_proxy_call=cgamma,
+        gamma_proxy_put=pgamma,
+        vega_proxy_call=cvega,
+        vega_proxy_put=pvega,
     )
