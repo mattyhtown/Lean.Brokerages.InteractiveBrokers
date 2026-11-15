@@ -14,6 +14,7 @@ from odte_spy_ibkr.backtest.calendar import iter_trading_days
 from odte_spy_ibkr.config import Settings
 from odte_spy_ibkr.research.alpaca_ingest import RESEARCH_ROOT, load_minute_bars, save_json
 from odte_spy_ibkr.research.chain_io import save_chain_snapshot
+from odte_spy_ibkr.chain.enrich import enrich_chain_row_at_bar
 from odte_spy_ibkr.research.features import SIGNAL_TIME, _price_at
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,9 @@ def bars_to_chain_rows(
     day: date,
     window_start: dt_time | None = None,
     window_end: dt_time | None = None,
+    spot: float | None = None,
 ) -> list[dict[str, Any]]:
+    stats_delta = {"computed": 0, "failed": 0}
     rows: list[dict[str, Any]] = []
     for sym, (strike, right) in symbol_map.items():
         series = bars.get(sym) or []
@@ -113,17 +116,30 @@ def bars_to_chain_rows(
         mid = float(pick.get("c") or pick.get("vw") or 0)
         if mid <= 0:
             continue
-        rows.append(
-            {
-                "symbol": sym,
-                "strike": strike,
-                "right": right,
-                "bid": mid,
-                "ask": mid,
-                "delta": None,
-                "volume": float(pick.get("v") or 0),
-                "open_interest": 0.0,
-            }
+        row = {
+            "symbol": sym,
+            "strike": strike,
+            "right": right,
+            "bid": mid,
+            "ask": mid,
+            "delta": None,
+            "volume": float(pick.get("v") or 0),
+            "open_interest": 0.0,
+        }
+        if spot is not None and spot > 0:
+            before = row.get("delta")
+            row = enrich_chain_row_at_bar(row, day=day, spot=spot, bar_as_of=_bar_time_et(pick))
+            if row.get("delta") is not None and before is None:
+                stats_delta["computed"] += 1
+            elif row.get("delta") is None:
+                stats_delta["failed"] += 1
+        rows.append(row)
+    if rows and spot:
+        logger.debug(
+            "chain delta enrich %s: computed=%s failed=%s",
+            day.isoformat(),
+            stats_delta["computed"],
+            stats_delta["failed"],
         )
     return rows
 
@@ -165,8 +181,8 @@ def ingest_chains_from_option_bars(
             close_bars = fetch_option_bars_batch(
                 settings, symbols, day=day, window_start=dt_time(15, 55), window_end=dt_time(16, 5)
             )
-        signal_rows = bars_to_chain_rows(symbol_map, signal_bars, day=day)
-        close_rows = bars_to_chain_rows(symbol_map, close_bars, day=day)
+        signal_rows = bars_to_chain_rows(symbol_map, signal_bars, day=day, spot=spot)
+        close_rows = bars_to_chain_rows(symbol_map, close_bars, day=day, spot=spot)
         if not signal_rows:
             stats["days_empty"] += 1
             continue

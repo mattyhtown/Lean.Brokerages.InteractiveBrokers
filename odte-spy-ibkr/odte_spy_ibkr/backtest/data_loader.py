@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from odte_spy_ibkr.chain import OptionCandidate, today_expiry
+from odte_spy_ibkr.chain.enrich import enrich_chain_rows
 from odte_spy_ibkr.config import Settings
 from odte_spy_ibkr.research.chain_io import load_chain_rows, rows_to_candidates
 from odte_spy_ibkr.research.paths import CHAIN_ROOT
@@ -27,6 +28,8 @@ def load_chain_for_day(
     if ticker.upper() == settings.underlying.upper():
         research_rows = load_chain_rows(day, snapshot="signal", root=CHAIN_ROOT)
         if research_rows:
+            if spot is not None and spot > 0 and any(r.get("delta") is None for r in research_rows):
+                research_rows, _ = enrich_chain_rows(research_rows, day=day, spot=spot)
             return rows_to_candidates(research_rows, day)
 
     path = _cache_path(settings, ticker, day)

@@ -8,6 +8,7 @@ from pathlib import Path
 from odte_spy_ibkr.config import Settings, load_settings
 from odte_spy_ibkr.research.alpaca_ingest import RESEARCH_ROOT, load_daily_bars
 from odte_spy_ibkr.research.minute_io import best_minute_root, load_minute_bars, minute_coverage
+from odte_spy_ibkr.chain.enrich import enrich_chain_rows
 from odte_spy_ibkr.research.chain_io import load_chain_rows, rows_to_candidates
 from odte_spy_ibkr.research.features import FeatureRow, compute_features_for_day
 from odte_spy_ibkr.research.labels import LabelRow, modeled_spread_pnl_from_marks, spy_return_to_close
@@ -132,8 +133,15 @@ def build_dataset(settings: Settings, *, days: list[date]) -> list[ResearchRow]:
         if not minute:
             prev_close = daily.get(day, prev_close)
             continue
+        from odte_spy_ibkr.research.features import SIGNAL_TIME, _price_at
+
+        spot = _price_at(minute, SIGNAL_TIME)
         signal_rows = load_chain_rows(day, snapshot="signal")
         close_rows = load_chain_rows(day, snapshot="close")
+        if signal_rows and spot and spot > 0 and any(r.get("delta") is None for r in signal_rows):
+            signal_rows, _ = enrich_chain_rows(signal_rows, day=day, spot=spot)
+        if close_rows and spot and spot > 0 and any(r.get("delta") is None for r in close_rows):
+            close_rows, _ = enrich_chain_rows(close_rows, day=day, spot=spot)
         chain = rows_to_candidates(signal_rows, day) if signal_rows else None
         feats = compute_features_for_day(
             settings,
@@ -154,9 +162,6 @@ def build_dataset(settings: Settings, *, days: list[date]) -> list[ResearchRow]:
             macro_tier1_surprise=feats.macro_tier1_surprise,
             uw_flow_strength=uw_strength,
         )
-        from odte_spy_ibkr.research.features import SIGNAL_TIME, _price_at
-
-        spot = _price_at(minute, SIGNAL_TIME)
         spread_pnl = None
         if signal_rows and spot and spot > 0:
             spread_pnl = _spread_pnl(settings, day, signal_rows=signal_rows, close_rows=close_rows, spot=spot)
