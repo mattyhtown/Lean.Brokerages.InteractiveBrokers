@@ -9,8 +9,9 @@ description: Route research and trades to the right MCP by asset class (equities
 
 1. Classify the user request into one primary asset class (and venue if prediction market).
 2. Call tools on the **first** route below; use fallback only when the primary returns unsupported or missing data.
-3. Use **preview** tools before any live order (Coinbase `coinbase_orders_preview`, `ib-lean-bridge` `preview_order`, Alpaca order tools with user confirmation). Call `ib-lean-bridge` `place_order` with `confirm=true` only after the user approves the previewed order.
-4. Never place prediction-market orders without explicit user approval (read-only tools first).
+3. Try an order on paper first when the user has not asked for a live one: `Alpaca-trading-paper` has the same tools as `Alpaca-trading`, and an IB paper login listens on port 7497 (TWS) or 4002 (Gateway).
+4. Use **preview** tools before any live order (Coinbase `coinbase_orders_preview`, `ib-lean-bridge` `preview_order`, Alpaca order tools with user confirmation). Call `ib-lean-bridge` `place_order` with `confirm=true` only after the user approves the previewed order.
+5. Never place prediction-market orders without explicit user approval (read-only tools first).
 
 ## Symbol convention
 
@@ -211,7 +212,7 @@ The list has no intraday bars and nothing for futures, forex or crypto. If it is
 
 ## MCP health
 
-If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugin. Reconnect ORATS/Kraken/Alpaca-paper in Cursor settings.
+If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugin. As checked on 2026-11-15, `orats` and `Kraken` fail tool discovery and `Alpaca-broker` needs a sign-in; reconnect them in Cursor settings. `Alpaca-trading`, `Alpaca-trading-paper` and `Coinbase` are connected.
 
 ## Examples
 

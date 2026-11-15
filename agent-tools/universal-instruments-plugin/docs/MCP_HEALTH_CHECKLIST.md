@@ -36,7 +36,8 @@ Asset class, the tool that serves it, what the account needs, and what a live ca
 | Prediction markets | `prediction-markets` (this plugin) | Nothing for reading | All nine tools answered against Kalshi and Polymarket. |
 | Options analytics | `orats` | ORATS subscription | Tool discovery failed; reconnect in Cursor settings. |
 | Kraken | `Kraken` | Kraken API connection | Tool discovery failed; reconnect in Cursor settings. |
-| Paper trading and broker API | `Alpaca-trading-paper`, `Alpaca-broker`, `Alpaca-broker-sandbox` | Sign-in for each | All three report that authentication is required. |
+| Paper trading | `Alpaca-trading-paper` (same tools as `Alpaca-trading`, against the paper account) | Sign-in | Connected. `get_account_info` returned status `ACTIVE`, options level 3, shorting enabled and crypto active. Data entitlements match the live connection: `feed=opra` returned 403 "OPRA agreement is not signed" and the SPX chain returned on `feed=indicative`. No order was placed. |
+| Broker API | `Alpaca-broker`, `Alpaca-broker-sandbox` | Sign-in for each; these are Alpaca's Broker API for firms that open accounts for their own customers, not needed to trade your own account | Both report that authentication is required. |
 
 ## Alpaca — options and index options
 
