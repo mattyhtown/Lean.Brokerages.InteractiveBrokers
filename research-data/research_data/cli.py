@@ -13,10 +13,12 @@ from multi_llm.client import ChatRequest, LLMError, complete
 from research_data.adjustments import FactorSnapshot, read_factor_files
 from research_data.alphavantage import Article, article_pages
 from research_data.benzinga import Headline, headline_pages
+from research_data.boosted_trees import MODEL, PARAMETERS, fit
 from research_data.http import LoaderError
 from research_data.local_finbert import LocalFinbert
 from research_data.local_whisper import LocalWhisper, whisper_installed
 from research_data.market_sentiment import fetch_news_sentiment, openbb_installed
+from research_data.model import describe, train_models
 from research_data.news import NewsDigest, fetch_digest
 from research_data.newsletters import fetch_newsletters
 from research_data.options import OptionsDay, download_day
@@ -201,6 +203,12 @@ def _run_openbb(args: argparse.Namespace, env: Mapping[str, str], supabase: Supa
     print(f"openbb: added {added} days of the San Francisco Fed news sentiment index{through}")
 
 
+def _run_train(args: argparse.Namespace, env: Mapping[str, str], supabase: SupabaseClient) -> None:
+    for training in train_models(supabase, fit, MODEL, PARAMETERS):
+        for line in describe(training):
+            print(f"train: {line}")
+
+
 # In the order `all` runs them: text sources before scoring, and the sources that
 # follow mentioned tickers after the newsletters that mention them.
 _STEPS = {
@@ -225,6 +233,10 @@ _OPTIONAL_STEP_SETTINGS = {
 }
 
 
+# Not part of `all`, which only loads.
+_TRAIN = "train"
+
+
 def _skip_reason(name: str, env: Mapping[str, str], args: argparse.Namespace) -> str | None:
     """Why `all` leaves the step out, or None when it runs."""
     setting = _OPTIONAL_STEP_SETTINGS.get(name)
@@ -243,18 +255,20 @@ def build_parser() -> argparse.ArgumentParser:
         prog="research-data",
         description="Load newsletters, news digests, Benzinga headlines, Alpha Vantage news scores, podcast "
         "transcripts, FinBERT sentiment, daily prices, options metrics, split and dividend factors and a market "
-        "news sentiment index into Supabase.",
+        "news sentiment index into Supabase, and retrain the return model on them.",
     )
     parser.add_argument(
         "step",
-        choices=[*_STEPS, "all"],
+        choices=[*_STEPS, "all", _TRAIN],
         help="newsletters: Gmail label to passages; news: today's Perplexity news digest per watchlist symbol; "
         "benzinga: Benzinga headlines per symbol; alphavantage: Alpha Vantage's scored news per symbol; "
         "podcasts: transcripts of the episodes in the listed podcast feeds; score: FinBERT on unscored "
         "passages; prices: Databento daily bars; options: ORATS daily options metrics; adjustments: split and dividend factors from QuantConnect factor files on this machine; "
         "openbb: the San Francisco Fed news sentiment index through OpenBB; all: every step in that order, "
         "leaving out news, benzinga, alphavantage, options and adjustments when their setting is missing, "
-        "podcasts when no feeds are listed and openbb when OpenBB is not installed",
+        "podcasts when no feeds are listed and openbb when OpenBB is not installed; train: retrain the return "
+        "model on training_rows, store how it scored on days it was not trained on and its predictions for the "
+        "newest session, which needs `poetry install --extras train`",
     )
     parser.add_argument("--label", default="Substack", help="Gmail label to read (default: Substack)")
     parser.add_argument(
@@ -299,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ
     try:
         supabase = SupabaseClient.from_env(env)
+        if args.step == _TRAIN:
+            _run_train(args, env, supabase)
+            return 0
         for name in _STEPS if args.step == "all" else [args.step]:
             reason = _skip_reason(name, env, args) if args.step == "all" else None
             if reason:

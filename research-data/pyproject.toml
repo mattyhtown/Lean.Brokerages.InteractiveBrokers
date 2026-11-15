@@ -19,11 +19,13 @@ openbb-federal-reserve = { version = ">=2.0", optional = true }
 faster-whisper = { version = ">=1.1", optional = true }
 # faster-whisper 1.2 opens audio with an argument that av 19 no longer accepts.
 av = { version = ">=11,<19", optional = true }
+scikit-learn = { version = ">=1.5", optional = true }
 
 [tool.poetry.extras]
 local = ["torch", "transformers"]
 openbb = ["openbb-federal-reserve"]
 podcasts = ["faster-whisper", "av"]
+train = ["scikit-learn"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
