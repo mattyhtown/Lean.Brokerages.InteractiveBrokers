@@ -330,6 +330,10 @@ def build_wire_request(
         fallback = source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
         if fallback:
             base_url = fallback
+    if not base_url.strip():
+        if spec.endpoint_env:
+            raise LLMError(f"Missing {spec.endpoint_env} for provider '{spec.name}'")
+        raise LLMError(f"No base URL configured for provider '{spec.name}'")
     allow_http_loopback = spec.name in ("ollama", "openai_compatible")
     base_url = _validate_base_url(base_url, allow_http_loopback=allow_http_loopback)
     url = f"{base_url}/chat/completions"

@@ -282,8 +282,9 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "vertex_openai",
         "Google Vertex AI (OpenAI-compat)",
         "google/gemini-2.5-pro",
-        "https://us-central1-aiplatform.googleapis.com/v1",
-        "GOOGLE_APPLICATION_CREDENTIALS",
+        "",
+        "GOOGLE_CLOUD_ACCESS_TOKEN",
+        "GCP_ACCESS_TOKEN",
         endpoint_env="VERTEX_OPENAI_BASE_URL",
     ),
     "databricks": _chat(
@@ -307,7 +308,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "vercel_ai_gateway",
         "Vercel AI Gateway",
         "openai/gpt-4.1",
-        "https://gateway.ai.cloudflare.com/v1",
+        "https://ai-gateway.vercel.sh/v1",
         "VERCEL_AI_GATEWAY_API_KEY",
         "AI_GATEWAY_API_KEY",
         endpoint_env="VERCEL_AI_GATEWAY_BASE_URL",
@@ -316,7 +317,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "cloudflare_ai",
         "Cloudflare Workers AI (OpenAI-compat)",
         "@cf/meta/llama-3.3-70b-instruct",
-        "https://api.cloudflare.com/client/v4",
+        "",
         "CLOUDFLARE_API_TOKEN",
         endpoint_env="CLOUDFLARE_AI_BASE_URL",
     ),
@@ -419,7 +420,15 @@ def is_provider_configured(spec: ProviderSpec, env: Mapping[str, str] | None = N
         return bool(endpoint and deployment and resolve_api_key(spec, source))
     if spec.name == "ollama":
         return True
-    if spec.name in ("watsonx", "databricks", "snowflake_cortex", "baseten", "lepton", "vertex_openai"):
+    if spec.name in (
+        "watsonx",
+        "databricks",
+        "snowflake_cortex",
+        "baseten",
+        "lepton",
+        "vertex_openai",
+        "cloudflare_ai",
+    ):
         custom_endpoint = source.get(spec.endpoint_env or "", "").strip()
         return bool(custom_endpoint and resolve_api_key(spec, source))
     if spec.name == "openai_compatible":
