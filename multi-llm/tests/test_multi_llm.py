@@ -190,7 +190,16 @@ def test_cohere_azure_bedrock_and_ollama() -> None:
             "output": {"message": {"content": [{"text": f"Bedrock from {u}"}]}}
         },
     )
-    assert "bedrock-runtime.us-west-2.amazonaws.com" in bedrock_resp.text
+    assert "https://bedrock-runtime.us-west-2.amazonaws.com/" in bedrock_resp.text
+
+    with pytest.raises(LLMError, match="Invalid AWS_REGION"):
+        build_wire_request(
+            ChatRequest(provider="bedrock", prompt="Hi"),
+            env={
+                "AWS_BEARER_TOKEN_BEDROCK": "brk-token",
+                "AWS_REGION": "evil.com",
+            },
+        )
 
     ollama_resp = complete(
         ChatRequest(provider="ollama", prompt="Local"),

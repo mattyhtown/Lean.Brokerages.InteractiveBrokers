@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import json
 import os
+import re
 from typing import Callable, Mapping
 import urllib.error
 import urllib.parse
@@ -17,6 +18,29 @@ TransportCallable = Callable[[str, dict[str, str], dict[str, object], int], dict
 
 class LLMError(Exception):
     pass
+
+
+# AWS region ids used only as a DNS label inside bedrock-runtime.<region>.amazonaws.com
+_AWS_REGION_RE = re.compile(
+    r"^(?:[a-z]{2}-(?:gov-)?[a-z0-9]+-\d+|cn-(?:north|northwest)-\d+)$"
+)
+_BEDROCK_HOST_SUFFIX = ".amazonaws.com"
+
+
+def _validate_aws_region(region: str) -> str:
+    cleaned = region.strip().lower()
+    if not cleaned or not _AWS_REGION_RE.fullmatch(cleaned):
+        raise LLMError(
+            f"Invalid AWS_REGION for Bedrock: {region!r} "
+            "(expected a value like us-east-1 or eu-west-1)"
+        )
+    return cleaned
+
+
+def _bedrock_runtime_url(region: str, encoded_model: str) -> str:
+    safe_region = _validate_aws_region(region)
+    host = f"bedrock-runtime.{safe_region}{_BEDROCK_HOST_SUFFIX}"
+    return f"https://{host}/model/{encoded_model}/converse"
 
 
 @dataclass(frozen=True)
@@ -219,7 +243,7 @@ def build_wire_request(
     if spec.protocol == "aws_bedrock":
         region = source.get("AWS_REGION", "us-east-1").strip() or "us-east-1"
         encoded_model = urllib.parse.quote(model, safe="-._:")
-        url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{encoded_model}/converse"
+        url = _bedrock_runtime_url(region, encoded_model)
         headers = {"Authorization": f"Bearer {api_key}"}
         body = {
             "messages": [{"role": "user", "content": [{"text": req.prompt}]}],
