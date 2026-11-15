@@ -34,7 +34,6 @@ class StubProvider(BaseProvider):
 
 
 STUB_SPECS: list[tuple[str, str, list[str]]] = [
-    ("orats", "ORATS_ENABLED", ["ORATS_API_KEY"]),
     ("you_finance", "YOU_FINANCE_ENABLED", ["YOU_API_KEY"]),
     ("context", "CONTEXT_ENABLED", ["CONTEXT_API_KEY"]),
     ("sp_global", "SP_GLOBAL_ENABLED", ["SP_GLOBAL_API_KEY"]),

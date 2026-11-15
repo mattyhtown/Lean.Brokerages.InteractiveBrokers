@@ -7,6 +7,8 @@ from pathlib import Path
 import httpx
 
 from odte_spy_ibkr.config import Settings
+from odte_spy_ibkr.research.features import SIGNAL_TIME, _price_at
+from odte_spy_ibkr.research.minute_io import load_minute_bars
 
 
 def _bar_cache_path(settings: Settings, ticker: str, day: date) -> Path:
@@ -17,8 +19,26 @@ def _bar_json_fallback(settings: Settings, ticker: str, day: date) -> Path:
     return Path(settings.backtest_cache_dir) / "bars" / ticker / f"{day.isoformat()}.json"
 
 
-def load_spot_for_day(settings: Settings, *, ticker: str, day: date, default: float = 450.0) -> float:
-    """Spot at ~11:00 ET using cached Alpaca daily bar or synthetic default."""
+def _spot_from_research_minutes(ticker: str, day: date) -> float | None:
+    if ticker.upper() != "SPY":
+        return None
+    minute = load_minute_bars(day)
+    if not minute:
+        return None
+    px = _price_at(minute, SIGNAL_TIME)
+    if px is not None and px > 0:
+        return px
+    return None
+
+
+def load_spot_for_day(
+    settings: Settings,
+    *,
+    ticker: str,
+    day: date,
+    default: float | None = None,
+) -> float | None:
+    """Spot at SIGNAL_TIME (11:00 ET). Returns None when no real price exists (no silent default)."""
     cache = _bar_cache_path(settings, ticker, day)
     json_fb = _bar_json_fallback(settings, ticker, day)
     if cache.is_file():
@@ -37,6 +57,10 @@ def load_spot_for_day(settings: Settings, *, ticker: str, day: date, default: fl
             if key in data:
                 return float(data[key])
 
+    research_px = _spot_from_research_minutes(ticker, day)
+    if research_px is not None:
+        return research_px
+
     if settings.alpaca_api_key and settings.alpaca_api_secret:
         bar = _fetch_alpaca_daily_bar(settings, ticker, day)
         if bar:
@@ -48,7 +72,9 @@ def load_spot_for_day(settings: Settings, *, ticker: str, day: date, default: fl
             except Exception:  # noqa: BLE001
                 json_fb.parent.mkdir(parents=True, exist_ok=True)
                 json_fb.write_text(json.dumps(bar), encoding="utf-8")
-            return float(bar.get("c") or bar.get("close") or default)
+            c = bar.get("c") or bar.get("close")
+            if c is not None:
+                return float(c)
 
     return default
 

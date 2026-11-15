@@ -100,14 +100,53 @@ class Settings(BaseSettings):
 
     # Multi-provider market data
     providers_enabled: str = Field(
-        default="ibkr,unusual_whales,alpaca",
+        default="ibkr,unusual_whales,alpaca,openbb,macro_news,tradingeconomics",
         alias="PROVIDERS_ENABLED",
     )
+
+    # OpenBB Platform (optional openbb package; PAT for Hub / historical providers)
+    openbb_pat: str = Field(default="", alias="OPENBB_PAT")
+    openbb_live_provider: str = Field(default="cboe", alias="OPENBB_LIVE_PROVIDER")
+    openbb_historical_provider: str = Field(default="intrinio", alias="OPENBB_HISTORICAL_PROVIDER")
 
     # Alpaca (read-only data cross-check)
     alpaca_api_key: str = Field(default="", alias="ALPACA_API_KEY")
     alpaca_api_secret: str = Field(default="", alias="ALPACA_API_SECRET")
     alpaca_data_url: str = Field(default="https://data.alpaca.markets", alias="ALPACA_DATA_URL")
+
+    # ORATS (research ingest + future vol provider)
+    orats_api_token: str = Field(default="", alias="ORATS_API_TOKEN")
+    orats_api_key: str = Field(default="", alias="ORATS_API_KEY")
+    orats_use_delayed_intraday: bool = Field(default=False, alias="ORATS_USE_DELAYED_INTRADAY")
+
+    # Theta Data (local Theta Terminal v3 loopback; credentials used at terminal launch)
+    thetadata_username: str = Field(default="", alias="THETADATA_USERNAME")
+    thetadata_password: str = Field(default="", alias="THETADATA_PASSWORD")
+    thetadata_terminal_url: str = Field(default="http://127.0.0.1:25503", alias="THETADATA_TERMINAL_URL")
+    thetadata_strike_range: int = Field(default=15, alias="THETADATA_STRIKE_RANGE")
+
+    # Trading Economics economic calendar
+    trading_economics_api_key: str = Field(default="", alias="TRADING_ECONOMICS_API_KEY")
+
+    # QuantConnect (LEAN CLI Dataset Market + REST authenticate)
+    quantconnect_user_id: str = Field(default="", alias="QUANTCONNECT_USER_ID")
+    quantconnect_api_token: str = Field(default="", alias="QUANTCONNECT_API_TOKEN")
+    quantconnect_api_base: str = Field(default="https://www.quantconnect.com/api/v2", alias="QUANTCONNECT_API_BASE")
+    quantconnect_lean_data_dir: str = Field(
+        default="data/quantconnect/lean",
+        alias="QUANTCONNECT_LEAN_DATA_DIR",
+    )
+    quantconnect_lean_workspace: str = Field(
+        default="",
+        alias="QUANTCONNECT_LEAN_WORKSPACE",
+        description="Directory containing lean.json for `lean data download` (optional).",
+    )
+    quantconnect_allow_paid_download: bool = Field(
+        default=False,
+        alias="QUANTCONNECT_ALLOW_PAID_DOWNLOAD",
+    )
+    quantconnect_equity_dataset: str = Field(default="US Equities", alias="QUANTCONNECT_EQUITY_DATASET")
+    quantconnect_option_dataset: str = Field(default="US Equity Options", alias="QUANTCONNECT_OPTION_DATASET")
 
     # Coinbase macro overlay (public stats; keys optional for future private endpoints)
     coinbase_api_key: str = Field(default="", alias="COINBASE_API_KEY")
@@ -156,6 +195,8 @@ class Settings(BaseSettings):
     improvement_auto_promote_live: bool = Field(default=False, alias="IMPROVEMENT_AUTO_PROMOTE_LIVE")
     improvement_sharpe_margin: float = Field(default=0.1, alias="IMPROVEMENT_SHARPE_MARGIN")
     improvement_max_dd_penalty: float = Field(default=0.25, alias="IMPROVEMENT_MAX_DD_PENALTY")
+    alpha_scored_entry_enabled: bool = Field(default=False, alias="ALPHA_SCORED_ENTRY_ENABLED")
+    alpha_min_score: float = Field(default=0.15, alias="ALPHA_MIN_SCORE")
     params_active_path: str = Field(default="params/active.yaml", alias="PARAMS_ACTIVE_PATH")
     params_history_dir: str = Field(default="params/history", alias="PARAMS_HISTORY_DIR")
 
@@ -170,6 +211,10 @@ class Settings(BaseSettings):
     @property
     def coinbase_products_list(self) -> list[str]:
         return [p.strip().upper() for p in self.coinbase_products.split(",") if p.strip()]
+
+    @property
+    def orats_api_token_resolved(self) -> str:
+        return (self.orats_api_token or self.orats_api_key or "").strip()
 
     @field_validator("entry_cutoff", "flatten_time", mode="before")
     @classmethod

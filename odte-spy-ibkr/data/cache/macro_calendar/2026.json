@@ -1,0 +1,28 @@
+{
+  "year": 2026,
+  "source": "Public BLS/Federal Reserve release schedules (tier-1 only); ET release times.",
+  "events": [
+    {"name": "Employment Situation (NFP)", "tier": 1, "release_at": "2026-07-03T08:30:00-04:00"},
+    {"name": "CPI", "tier": 1, "release_at": "2026-07-15T08:30:00-04:00"},
+    {"name": "PPI", "tier": 1, "release_at": "2026-07-16T08:30:00-04:00"},
+    {"name": "Retail Sales", "tier": 1, "release_at": "2026-07-17T08:30:00-04:00"},
+    {"name": "FOMC rate decision", "tier": 1, "release_at": "2026-07-30T14:00:00-04:00"},
+    {"name": "Employment Situation (NFP)", "tier": 1, "release_at": "2026-08-07T08:30:00-04:00"},
+    {"name": "CPI", "tier": 1, "release_at": "2026-08-12T08:30:00-04:00"},
+    {"name": "PPI", "tier": 1, "release_at": "2026-08-13T08:30:00-04:00"},
+    {"name": "Retail Sales", "tier": 1, "release_at": "2026-08-15T08:30:00-04:00"},
+    {"name": "Employment Situation (NFP)", "tier": 1, "release_at": "2026-09-04T08:30:00-04:00"},
+    {"name": "CPI", "tier": 1, "release_at": "2026-09-11T08:30:00-04:00"},
+    {"name": "PPI", "tier": 1, "release_at": "2026-09-12T08:30:00-04:00"},
+    {"name": "Retail Sales", "tier": 1, "release_at": "2026-09-16T08:30:00-04:00"},
+    {"name": "FOMC rate decision", "tier": 1, "release_at": "2026-09-17T14:00:00-04:00"},
+    {"name": "Employment Situation (NFP)", "tier": 1, "release_at": "2026-10-02T08:30:00-04:00"},
+    {"name": "CPI", "tier": 1, "release_at": "2026-10-14T08:30:00-04:00"},
+    {"name": "PPI", "tier": 1, "release_at": "2026-10-15T08:30:00-04:00"},
+    {"name": "Retail Sales", "tier": 1, "release_at": "2026-10-16T08:30:00-04:00"},
+    {"name": "Employment Situation (NFP)", "tier": 1, "release_at": "2026-11-06T08:30:00-04:00"},
+    {"name": "CPI", "tier": 1, "release_at": "2026-11-13T08:30:00-04:00"},
+    {"name": "PPI", "tier": 1, "release_at": "2026-11-14T08:30:00-04:00"},
+    {"name": "Retail Sales", "tier": 1, "release_at": "2026-11-15T08:30:00-04:00"}
+  ]
+}

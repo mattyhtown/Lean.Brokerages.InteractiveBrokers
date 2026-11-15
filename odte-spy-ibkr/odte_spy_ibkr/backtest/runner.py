@@ -48,9 +48,14 @@ def run_backtest(
     open_pos: OpenPosition | None = None
     trade_wins: list[bool] = []
     verbose_report = VerboseSessionReport()
+    skipped_no_spot = 0
 
     for day in all_days:
         spot = load_spot_for_day(settings, ticker=settings.underlying, day=day)
+        if spot is None:
+            skipped_no_spot += 1
+            logger.info("skip session %s: no_spot", day.isoformat())
+            continue
         chain = load_chain_for_day(settings, ticker=settings.underlying, day=day, spot=spot)
         sim = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
         open_pos = sim.open_position
@@ -102,6 +107,7 @@ def run_backtest(
         "max_drawdown": summary.max_drawdown,
         "total_pnl": summary.total_pnl,
         "total_pnl_all_days": full_ledger.total_pnl(),
+        "skipped_no_spot": skipped_no_spot,
     }
     if verbose_report.sessions:
         payload["session_reason_counts"] = verbose_report.reason_counts

@@ -1,0 +1,1 @@
+"""Alpha research: feature construction and out-of-sample evaluation on real market data."""

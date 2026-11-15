@@ -30,10 +30,16 @@ class MacroHeadline:
 
 
 def load_macro_calendar_for_year(settings: Settings, year: int) -> list[dict[str, Any]]:
-    path = Path(settings.backtest_cache_dir) / "macro_calendar" / f"{year}.json"
-    if path.is_file():
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return list(data.get("events") or [])
+    paths = [
+        Path(settings.backtest_cache_dir) / "macro_calendar" / f"{year}.json",
+        Path("data/research/tradingeconomics/macro_calendar") / f"{year}.json",
+    ]
+    for path in paths:
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            events = list(data.get("events") or [])
+            if events:
+                return events
     return load_macro_events(settings.macro_calendar_path)
 
 
@@ -191,7 +197,7 @@ class MacroNewsProvider(BaseProvider):
         return self._settings.macro_enabled
 
     def _in_blackout(self, now: datetime) -> bool:
-        for evt in load_macro_events(self._settings.macro_calendar_path):
+        for evt in load_macro_calendar_for_year(self._settings, now.year):
             release = datetime.fromisoformat(str(evt["release_at"]).replace("Z", "+00:00"))
             if release.date() != now.date():
                 continue

@@ -20,7 +20,8 @@ def test_odte_positions_do_not_carry_overnight_default_config():
     open_pos = None
     entry_days = 0
     for day in days:
-        spot = load_spot_for_day(settings, ticker="SPY", day=day)
+        spot = load_spot_for_day(settings, ticker="SPY", day=day, default=450.0)
+        assert spot is not None
         chain = load_chain_for_day(settings, ticker="SPY", day=day, spot=spot)
         sim = simulate_day(settings, day=day, candidates=chain, spot=spot, open_position=open_pos)
         open_pos = sim.open_position

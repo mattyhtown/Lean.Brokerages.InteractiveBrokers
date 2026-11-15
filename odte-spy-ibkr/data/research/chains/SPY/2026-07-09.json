@@ -1,0 +1,377 @@
+{
+  "date": "2026-07-09",
+  "source": "alpaca_option_bars",
+  "snapshot": "signal",
+  "rows": [
+    {
+      "symbol": "SPY260709P00734000",
+      "strike": 734.0,
+      "right": "P",
+      "bid": 0.03,
+      "ask": 0.03,
+      "delta": null,
+      "volume": 11.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00735000",
+      "strike": 735.0,
+      "right": "P",
+      "bid": 0.03,
+      "ask": 0.03,
+      "delta": null,
+      "volume": 7.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00735000",
+      "strike": 735.0,
+      "right": "C",
+      "bid": 13.86,
+      "ask": 13.86,
+      "delta": null,
+      "volume": 1.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00736000",
+      "strike": 736.0,
+      "right": "P",
+      "bid": 0.04,
+      "ask": 0.04,
+      "delta": null,
+      "volume": 3.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00737000",
+      "strike": 737.0,
+      "right": "P",
+      "bid": 0.04,
+      "ask": 0.04,
+      "delta": null,
+      "volume": 35.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00738000",
+      "strike": 738.0,
+      "right": "P",
+      "bid": 0.04,
+      "ask": 0.04,
+      "delta": null,
+      "volume": 6.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00738000",
+      "strike": 738.0,
+      "right": "C",
+      "bid": 10.91,
+      "ask": 10.91,
+      "delta": null,
+      "volume": 1.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00739000",
+      "strike": 739.0,
+      "right": "P",
+      "bid": 0.06,
+      "ask": 0.06,
+      "delta": null,
+      "volume": 139.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00739000",
+      "strike": 739.0,
+      "right": "C",
+      "bid": 9.64,
+      "ask": 9.64,
+      "delta": null,
+      "volume": 7.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00740000",
+      "strike": 740.0,
+      "right": "P",
+      "bid": 0.07,
+      "ask": 0.07,
+      "delta": null,
+      "volume": 670.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00740000",
+      "strike": 740.0,
+      "right": "C",
+      "bid": 9.0,
+      "ask": 9.0,
+      "delta": null,
+      "volume": 3.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00741000",
+      "strike": 741.0,
+      "right": "P",
+      "bid": 0.08,
+      "ask": 0.08,
+      "delta": null,
+      "volume": 265.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00741000",
+      "strike": 741.0,
+      "right": "C",
+      "bid": 7.96,
+      "ask": 7.96,
+      "delta": null,
+      "volume": 2.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00742000",
+      "strike": 742.0,
+      "right": "P",
+      "bid": 0.11,
+      "ask": 0.11,
+      "delta": null,
+      "volume": 159.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00742000",
+      "strike": 742.0,
+      "right": "C",
+      "bid": 7.04,
+      "ask": 7.04,
+      "delta": null,
+      "volume": 3.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00743000",
+      "strike": 743.0,
+      "right": "P",
+      "bid": 0.15,
+      "ask": 0.15,
+      "delta": null,
+      "volume": 237.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00743000",
+      "strike": 743.0,
+      "right": "C",
+      "bid": 6.06,
+      "ask": 6.06,
+      "delta": null,
+      "volume": 15.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00744000",
+      "strike": 744.0,
+      "right": "P",
+      "bid": 0.2,
+      "ask": 0.2,
+      "delta": null,
+      "volume": 524.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00744000",
+      "strike": 744.0,
+      "right": "C",
+      "bid": 5.15,
+      "ask": 5.15,
+      "delta": null,
+      "volume": 27.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709P00745000",
+      "strike": 745.0,
+      "right": "P",
+      "bid": 0.28,
+      "ask": 0.28,
+      "delta": null,
+      "volume": 1693.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00745000",
+      "strike": 745.0,
+      "right": "C",
+      "bid": 4.21,
+      "ask": 4.21,
+      "delta": null,
+      "volume": 71.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00746000",
+      "strike": 746.0,
+      "right": "C",
+      "bid": 3.32,
+      "ask": 3.32,
+      "delta": null,
+      "volume": 173.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00747000",
+      "strike": 747.0,
+      "right": "C",
+      "bid": 2.49,
+      "ask": 2.49,
+      "delta": null,
+      "volume": 432.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00748000",
+      "strike": 748.0,
+      "right": "C",
+      "bid": 1.73,
+      "ask": 1.73,
+      "delta": null,
+      "volume": 813.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00749000",
+      "strike": 749.0,
+      "right": "C",
+      "bid": 1.12,
+      "ask": 1.12,
+      "delta": null,
+      "volume": 3431.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00750000",
+      "strike": 750.0,
+      "right": "C",
+      "bid": 0.63,
+      "ask": 0.63,
+      "delta": null,
+      "volume": 2788.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00751000",
+      "strike": 751.0,
+      "right": "C",
+      "bid": 0.31,
+      "ask": 0.31,
+      "delta": null,
+      "volume": 2293.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00752000",
+      "strike": 752.0,
+      "right": "C",
+      "bid": 0.14,
+      "ask": 0.14,
+      "delta": null,
+      "volume": 541.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00753000",
+      "strike": 753.0,
+      "right": "C",
+      "bid": 0.06,
+      "ask": 0.06,
+      "delta": null,
+      "volume": 557.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00754000",
+      "strike": 754.0,
+      "right": "C",
+      "bid": 0.03,
+      "ask": 0.03,
+      "delta": null,
+      "volume": 45.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00755000",
+      "strike": 755.0,
+      "right": "C",
+      "bid": 0.02,
+      "ask": 0.02,
+      "delta": null,
+      "volume": 47.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00756000",
+      "strike": 756.0,
+      "right": "C",
+      "bid": 0.02,
+      "ask": 0.02,
+      "delta": null,
+      "volume": 1.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00757000",
+      "strike": 757.0,
+      "right": "C",
+      "bid": 0.01,
+      "ask": 0.01,
+      "delta": null,
+      "volume": 15.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00758000",
+      "strike": 758.0,
+      "right": "C",
+      "bid": 0.01,
+      "ask": 0.01,
+      "delta": null,
+      "volume": 4.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00761000",
+      "strike": 761.0,
+      "right": "C",
+      "bid": 0.01,
+      "ask": 0.01,
+      "delta": null,
+      "volume": 3.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00763000",
+      "strike": 763.0,
+      "right": "C",
+      "bid": 0.01,
+      "ask": 0.01,
+      "delta": null,
+      "volume": 1.0,
+      "open_interest": 0.0
+    },
+    {
+      "symbol": "SPY260709C00764000",
+      "strike": 764.0,
+      "right": "C",
+      "bid": 0.02,
+      "ask": 0.02,
+      "delta": null,
+      "volume": 1.0,
+      "open_interest": 0.0
+    }
+  ]
+}

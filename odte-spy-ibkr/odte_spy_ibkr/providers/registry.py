@@ -8,6 +8,8 @@ from odte_spy_ibkr.providers.base import BaseProvider
 from odte_spy_ibkr.providers.coinbase import CoinbaseProvider
 from odte_spy_ibkr.providers.ibkr import IBKRProvider
 from odte_spy_ibkr.providers.macro_news import MacroNewsProvider
+from odte_spy_ibkr.providers.openbb import OpenBBProvider
+from odte_spy_ibkr.providers.tradingeconomics_macro import TradingEconomicsMacroProvider
 from odte_spy_ibkr.providers.stubs import build_stub_providers
 from odte_spy_ibkr.providers.unusual_whales import UnusualWhalesProvider
 
@@ -21,8 +23,10 @@ def build_providers(settings: Settings, ib_session: IBSession | None) -> list[Ba
         IBKRProvider(ib_session, enabled="ibkr" in enabled),
         UnusualWhalesProvider(settings),
         AlpacaProvider(settings),
+        OpenBBProvider(settings),
         CoinbaseProvider(settings),
         MacroNewsProvider(settings),
+        TradingEconomicsMacroProvider(settings),
         *build_stub_providers(enabled),
     ]
     order = {pid: i for i, pid in enumerate(settings.providers_enabled_list)}

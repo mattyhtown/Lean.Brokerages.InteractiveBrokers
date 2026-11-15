@@ -34,14 +34,15 @@ This software is for education and paper testing only. Options trading involves 
 | `unusual_whales` | **Implemented** | `UNUSUAL_WHALES_API_KEY`, `GET /api/stock/SPY/flow-recent`, `flow-alerts`, `option-activity/unusual` |
 | `alpaca` | **Implemented** | `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `ALPACA_DATA_URL` — `GET /v2/stocks/SPY/snapshot`, optional `GET /v1beta1/options/snapshots/SPY` |
 | `coinbase` | **Implemented** | Public `GET https://api.exchange.coinbase.com/products/{id}/stats` for BTC/ETH 24h % → `macro_risk_off` |
-| `orats` | **Stub** | `ORATS_ENABLED=true` + `ORATS_API_KEY` (raises until implemented) |
+| `orats` | **Research ingest** | `ORATS_API_TOKEN` — historical 1-min strikes chain via `python -m odte_spy_ibkr.research ingest --source orats` (no live MCP) |
+| `openbb` | **Live + research** | `pip install 'odte-spy-ibkr[openbb]'`; optional `OPENBB_PAT` for Hub/historical; live chains default `OPENBB_LIVE_PROVIDER=cboe`; historical ingest `OPENBB_HISTORICAL_PROVIDER=intrinio` — see `data/research/openbb/README.md` |
 | `you_finance` | **Stub** | `YOU_FINANCE_ENABLED` + `YOU_API_KEY` |
 | `context` | **Stub** | `CONTEXT_ENABLED` + `CONTEXT_API_KEY` |
 | `sp_global` | **Stub** | `SP_GLOBAL_ENABLED` + `SP_GLOBAL_API_KEY` |
 | `daloopa` | **Stub** | `DALOOPA_ENABLED` + `DALOOPA_API_KEY` |
 | `perspective` | **Stub** | `PERSPECTIVE_ENABLED` + `PERSPECTIVE_API_KEY` |
 
-Enable providers: `PROVIDERS_ENABLED=ibkr,unusual_whales,alpaca,coinbase`
+Enable providers: `PROVIDERS_ENABLED=ibkr,unusual_whales,alpaca,openbb,coinbase`
 
 Missing keys are skipped gracefully (aggregator logs and continues).
 
@@ -121,6 +122,34 @@ python -m odte_spy_ibkr.unusual_whales --once
 Appends `data/cache/uw/sessions/{date}.jsonl` and refreshes `data/cache/uw/{date}.json` for backtest replay.
 
 **Gaps:** Without Alpaca/UW keys, backtest uses **synthetic** chains (not historical marks); UW history is cache-first.
+
+## Alpha research ingest (real data)
+
+See `data/research/README.md` for cache layout.
+
+```bash
+# Credential scan runs at the start of every research CLI invocation.
+python -m odte_spy_ibkr.research ingest --source alpaca --start 2026-07-01 --end 2026-11-05
+python -m odte_spy_ibkr.research ingest --source uw     # needs UNUSUAL_WHALES_API_KEY
+python -m odte_spy_ibkr.research ingest --source orats  # needs ORATS_API_TOKEN
+python -m odte_spy_ibkr.research ingest --source openbb  # pip install 'odte-spy-ibkr[openbb]'; OPENBB_PAT for dated history
+python -m odte_spy_ibkr.research ingest --source ibkr   # needs TWS/Gateway on IB_HOST:IB_PORT, READ_ONLY=true
+python -m odte_spy_ibkr.research ingest --source thetadata        # needs THETADATA_* + local Theta Terminal v3
+python -m odte_spy_ibkr.research ingest --source tradingeconomics # needs TRADING_ECONOMICS_API_KEY
+python -m odte_spy_ibkr.research ingest --source quantconnect      # needs QC creds + local LEAN data or CLI
+python -m odte_spy_ibkr.research evaluate --run 2
+```
+
+- **Alpaca:** SPY minutes + daily summary.
+- **Unusual Whales:** `flow-per-strike?date=` + `option-chains?date=&greeks=true` (historical); `flow-recent` is live-only per UW docs.
+- **ORATS:** `GET /datav2/historical/one-minute/strikes/chain` (CSV, EST `tradeDate`); does not provide equity OHLC — pair with Alpaca/IBKR for SPY bars.
+- **IBKR:** `reqHistoricalData` read-only; ~11s pacing between option requests.
+- **Theta Data:** `GET http://127.0.0.1:25503/v3/option/history/quote` for 0DTE NBBO (requires **Theta Terminal** running locally with `THETADATA_USERNAME` / `THETADATA_PASSWORD` at launch — loopback HTTP has no per-request auth). Writes unified `chains/SPY/{date}.json`; backtest loader reads that cache first.
+- **Trading Economics:** `GET /calendar/country/united%20states/{start}/{end}?c=KEY&values=true` — actual/forecast/previous + numeric surprise; feeds `data/research/tradingeconomics/` and mirrors tier-1/2 rows into `data/cache/macro_calendar/`. New research feature: `macro_tier1_surprise` (actual − forecast for tier-1 releases before 11:00 ET, no lookahead).
+
+- **QuantConnect:** `POST /api/v2/authenticate` with `QUANTCONNECT_USER_ID` + `QUANTCONNECT_API_TOKEN`; historical files come from the **LEAN CLI** `lean data download` (Dataset Market, **QCC per file**, paid organization tier — not a REST bulk history API). Imports on-disk LEAN zips into `data/research/quantconnect/minute/` and unified `chains/SPY/`. Set `QUANTCONNECT_ALLOW_PAID_DOWNLOAD=true` only when you accept QCC charges.
+
+Neither UW, IBKR, ORATS, Theta Data, Trading Economics, nor QuantConnect ingest was executed against live services in the cloud agent environment (mocked unit tests only).
 
 ## Continuous improvement
 
