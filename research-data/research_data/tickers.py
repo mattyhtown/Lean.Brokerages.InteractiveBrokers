@@ -45,6 +45,10 @@ class Watchlist:
             pattern = re.compile(rf"(?<![\w$])(?:{alternatives})(?![\w])")
         return cls(tuple(symbols), term_to_symbol, pattern)
 
+    def names(self, symbol: str) -> list[str]:
+        """The company names listed for a symbol, in the order they were written."""
+        return [term for term, owner in self.term_to_symbol.items() if owner == symbol and term != symbol]
+
 
 EMPTY_WATCHLIST = Watchlist((), {}, None)
 

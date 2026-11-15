@@ -135,11 +135,15 @@ def _split_long(paragraph: str) -> list[str]:
     return chunks
 
 
+def passage_chunks(body_text: str) -> list[str]:
+    """A cleaned body cut into pieces short enough for FinBERT: one per paragraph, long ones split."""
+    return [chunk for paragraph in body_text.splitlines() for chunk in _split_long(paragraph)]
+
+
 def ticker_passages(body_text: str, watchlist: Watchlist) -> list[Passage]:
     """The passages of a cleaned newsletter body that mention at least one ticker."""
-    chunks = [chunk for paragraph in body_text.splitlines() for chunk in _split_long(paragraph)]
     passages = []
-    for index, chunk in enumerate(chunks):
+    for index, chunk in enumerate(passage_chunks(body_text)):
         tickers = extract_tickers(chunk, watchlist)
         if tickers:
             passages.append(Passage(index, chunk, tickers))
