@@ -1,0 +1,25 @@
+{
+  "data": [
+    {
+      "option_type": "C",
+      "side": "ask",
+      "premium": 320000,
+      "created_at": "2026-11-15T14:30:00Z",
+      "tags": ["bullish", "sweep"]
+    },
+    {
+      "option_type": "C",
+      "side": "bid",
+      "premium": 180000,
+      "created_at": "2026-11-15T14:31:00Z",
+      "tags": ["opening"]
+    },
+    {
+      "option_type": "P",
+      "side": "ask",
+      "premium": 90000,
+      "created_at": "2026-11-15T14:32:00Z",
+      "tags": ["bearish"]
+    }
+  ]
+}

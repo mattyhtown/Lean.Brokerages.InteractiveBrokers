@@ -1,0 +1,41 @@
+ib:
+  host: 127.0.0.1
+  port: 7497
+  client_id: 7
+  paper: true
+
+safety:
+  live_trading: false
+  read_only: true
+  enable_orders: false
+
+providers:
+  enabled: ibkr,unusual_whales,alpaca
+
+strategy:
+  underlying: SPY
+  credit_side: put
+  min_minutes_after_open: 30
+  min_credit: 0.15
+  spread_width: 1.0
+  max_contracts: 1
+  max_daily_loss: 500
+  entry_cutoff: "15:00"
+  flatten_time: "15:45"
+  poll_interval_sec: 30
+
+unusual_whales:
+  base_url: https://api.unusualwhales.com
+  required: false
+  min_strength: 0.35
+  mode: alerts_only
+  poll_interval_sec: 120
+  cache_ttl_sec: 90
+  stale_block_sec: 600
+
+alpaca:
+  data_url: https://data.alpaca.markets
+
+coinbase:
+  products: BTC-USD,ETH-USD
+  risk_off_threshold_pct: 3.0

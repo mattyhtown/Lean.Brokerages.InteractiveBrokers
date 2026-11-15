@@ -1,0 +1,2 @@
+[console_scripts]
+odte-spy-ibkr = odte_spy_ibkr.runner:main
