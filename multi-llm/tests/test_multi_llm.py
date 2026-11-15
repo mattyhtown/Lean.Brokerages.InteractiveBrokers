@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 import re
 import threading
+import urllib.request
 
 import pytest
 
@@ -397,6 +399,20 @@ def test_minimax_group_id_is_not_an_api_key() -> None:
     assert by_name["minimax"]["configured"] is False
     with pytest.raises(LLMError, match="MINIMAX_API_KEY"):
         build_wire_request(ChatRequest(provider="minimax", prompt="Hi"), env=env)
+
+
+def test_default_transport_names_itself_in_the_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[urllib.request.Request] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> io.BytesIO:
+        sent.append(request)
+        return io.BytesIO(b'{"choices": [{"message": {"content": "pong"}}]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    resp = complete(ChatRequest(provider="hyperbolic", prompt="Ping"), env={"HYPERBOLIC_API_KEY": "token-xyz"})
+    assert resp.text == "pong"
+    assert sent[0].get_header("User-agent") == "qc-multi-llm"
+    assert sent[0].get_header("Authorization") == "Bearer token-xyz"
 
 
 def test_minimax_base_url_can_point_at_the_mainland_host() -> None:

@@ -23,6 +23,9 @@ from multi_llm.providers import (
 
 TransportCallable = Callable[[str, dict[str, str], dict[str, object], int], object]
 
+# Some providers sit behind a firewall that turns away urllib's default User-Agent.
+USER_AGENT = "qc-multi-llm"
+
 
 class LLMError(Exception):
     pass
@@ -145,7 +148,12 @@ def _default_transport(
         raise LLMError(f"Refusing non-HTTP(S) provider URL: {url}")
     _assert_credential_transport_safe(url, headers)
     encoded = json.dumps(body).encode("utf-8")
-    req_headers = {"Content-Type": "application/json", "Accept": "application/json", **headers}
+    req_headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+        **headers,
+    }
     request = urllib.request.Request(url, data=encoded, headers=req_headers, method="POST")
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         payload = response.read().decode("utf-8")
