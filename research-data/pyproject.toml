@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "qc-research-data"
+version = "0.1.0"
+description = "Loads newsletters, news digests, Benzinga headlines, Alpha Vantage news scores, podcast transcripts, FinBERT sentiment, daily prices, options metrics, split and dividend factors and a market news sentiment index into Supabase as a model-training dataset"
+authors = ["QuantConnect IB Workspace Contributors"]
+readme = "README.md"
+packages = [{ include = "research_data" }]
+
+[tool.poetry.scripts]
+research-data = "research_data.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+qc-multi-llm = { path = "../multi-llm", develop = true }
+defusedxml = ">=0.7"
+torch = { version = ">=2.6", optional = true }
+transformers = { version = ">=4.48", optional = true }
+openbb-federal-reserve = { version = ">=2.0", optional = true }
+faster-whisper = { version = ">=1.1", optional = true }
+# faster-whisper 1.2 opens audio with an argument that av 19 no longer accepts.
+av = { version = ">=11,<19", optional = true }
+scikit-learn = { version = ">=1.5", optional = true }
+
+[tool.poetry.extras]
+local = ["torch", "transformers"]
+openbb = ["openbb-federal-reserve"]
+podcasts = ["faster-whisper", "av"]
+train = ["scikit-learn"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
