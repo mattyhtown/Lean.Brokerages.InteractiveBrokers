@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import math
 from typing import Iterator
@@ -63,6 +63,13 @@ def _number(value: object) -> float:
     if not math.isfinite(number):
         raise ValueError(value)
     return number
+
+
+def _cut_short(symbol: str, minute: datetime, count: int) -> LoaderError:
+    return LoaderError(
+        f"Alpha Vantage sends at most {count} {symbol} articles a request, not the {PAGE_SIZE} asked for, and "
+        f"{minute:%Y-%m-%d %H:%M} UTC has at least that many: any more from that minute cannot be read"
+    )
 
 
 def _feed(body: bytes, symbol: str) -> list[_FeedEntry]:
@@ -131,10 +138,21 @@ def article_pages(
 
     Oldest first. The API has no page number, so each further request starts at the minute of
     the newest article read so far, and the articles that minute shares with the page before
-    are dropped. The download ends at a response too short to have been cut off.
+    are dropped. The download ends at a response too short to have been cut off: shorter than
+    the API's default limit, or than an earlier response to this download.
+
+    A response that only repeats one minute's articles, and is as long as any before it, is
+    what an API that sends as many articles as it is asked for returns only when every article
+    so far is in that minute. The download then goes on from the minute after, which is empty
+    at the end of the feed. Anything else shows the API cuts its responses shorter than asked,
+    so that minute may hold articles it never sent, and the download stops with an error.
     """
     start = datetime.combine(since, time.min, tzinfo=timezone.utc)
     seen: set[str] = set()
+    oldest: datetime | None = None
+    longest = 0
+    # The minute last stepped over and how many articles it filled a response with.
+    passed: tuple[datetime, int] | None = None
     for _ in range(MAX_PAGES):
         query = {
             "function": "NEWS_SENTIMENT",
@@ -151,23 +169,37 @@ def article_pages(
             # Alpha Vantage repeats the key in some of its messages.
             kind = SymbolRejected if isinstance(exc, SymbolRejected) else LoaderError
             raise kind(str(exc).replace(api_key, "[key]")) from None
-        more = len(entries) >= SHORTEST_PAGE
+        more = len(entries) >= max(SHORTEST_PAGE, longest)
+        longest = max(longest, len(entries))
         if more and entries[0].published_at > entries[-1].published_at:
             # Paging forward from the newest article would skip everything older than this page.
             raise LoaderError(f"Alpha Vantage did not send the {symbol} articles oldest first")
         new = [entry for entry in entries if entry.url not in seen]
+        if new and passed is not None:
+            # An API that sent all it was asked for would have sent these with the minute stepped over.
+            raise _cut_short(symbol, *passed)
         seen.update(entry.url for entry in new)
+        oldest = min([entry.published_at for entry in entries] + ([oldest] if oldest else []), default=None)
         scored = _scored(new, symbol)
         if scored:
             yield scored
         if not more:
             return
-        if not new:
+        if new:
+            start = max(entry.published_at for entry in entries)
+            continue
+        # Every article is one already read, so all of them are in the minute asked from.
+        minute = start.replace(second=0, microsecond=0)
+        if len(entries) >= PAGE_SIZE:
             raise LoaderError(
-                f"Alpha Vantage sent the same {len(entries)} {symbol} articles again "
-                f"from {start:%Y-%m-%d %H:%M} UTC"
+                f"Alpha Vantage has more than {PAGE_SIZE} {symbol} articles at {minute:%Y-%m-%d %H:%M} UTC, "
+                "which is more than one request can return"
             )
-        start = max(entry.published_at for entry in entries)
+        if oldest is not None and oldest < minute:
+            # No earlier response was longer, yet one of them reached back before this minute.
+            raise _cut_short(symbol, minute, len(entries))
+        passed = (minute, len(entries))
+        start = minute + timedelta(minutes=1)
     raise LoaderError(
         f"Alpha Vantage has more than {MAX_PAGES} pages of {symbol} articles since {since}: "
         "load the rest with a later --since"
