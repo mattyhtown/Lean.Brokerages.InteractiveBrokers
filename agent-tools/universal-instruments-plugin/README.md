@@ -50,7 +50,7 @@ chmod +x agent-tools/universal-instruments-plugin/scripts/check-ib-env.sh
 
 | MCP | Tools |
 |-----|--------|
-| `prediction-markets` | `list_kalshi_markets`, `get_kalshi_market`, `get_kalshi_orderbook`, `list_polymarket_markets`, `get_polymarket_market`, `get_polymarket_orderbook` |
+| `prediction-markets` | `list_kalshi_markets`, `get_kalshi_market`, `get_kalshi_orderbook`, `get_kalshi_trades`, `get_kalshi_candlesticks`, `list_polymarket_markets`, `get_polymarket_market`, `get_polymarket_orderbook`, `get_polymarket_price_history` |
 | `ib-lean-bridge` | `ping`, `get_historical_bars`, `get_contract_details` |
 
 Existing Cursor MCPs (Alpaca, Coinbase, etc.) remain the primary path for US equities, options, and crypto; see the instrument-router skill.

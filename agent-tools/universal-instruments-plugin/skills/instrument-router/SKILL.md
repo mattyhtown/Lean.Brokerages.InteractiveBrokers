@@ -45,6 +45,8 @@ description: Route research and trades to the right MCP by asset class (equities
 | US crypto futures | `Coinbase` `FUTURE`, `GLOBAL_PERP` | — |
 | Kalshi events / book | `prediction-markets` `list_kalshi_markets`, `get_kalshi_orderbook` | — |
 | Polymarket events / book | `prediction-markets` `list_polymarket_markets`, `get_polymarket_orderbook` | — |
+| Kalshi price history and trade tape | `prediction-markets` `get_kalshi_candlesticks` (needs the market's `series_ticker`, a start and end in Unix seconds, and a candle length of 1, 60 or 1440 minutes) and `get_kalshi_trades` | — |
+| Polymarket price history | `prediction-markets` `get_polymarket_price_history` with the token id and either `interval` (`1h`, `6h`, `1d`, `1w`, or `1m` for one month) or `start_ts` and `end_ts` | — |
 
 ## Research data routing
 
@@ -216,6 +218,7 @@ If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugi
 - "EURUSD last day" → `ib-lean-bridge` `get_historical_bars` with `symbol=EURUSD`, `sec_type=CASH`, `exchange=IDEALPRO`.
 - "Kalshi Fed rate market" → `list_kalshi_markets` with `status=open` and search results client-side.
 - "Polymarket book" → `get_polymarket_market` then `get_polymarket_orderbook` with token id from market.
+- "How has the Kalshi Fed cut market moved this week" → `get_kalshi_candlesticks` with `series_ticker=KXFEDCUT`, the market ticker, `period_interval=1440` and a seven-day range.
 - "AAPL short interest" → GET `https://stockanalysis.com/stocks/aapl/statistics/__data.json`, resolve the index references, read `shortSelling`.
 - "Analyst view on AAPL" → GET `https://www.tipranks.com/api/stocks/getData/?name=AAPL` for consensus and price targets. Report `zacks_rank` from `https://quote-feed.zacks.com/index?t=AAPL` separately as Zacks' model rank.
 
