@@ -316,6 +316,19 @@ def test_rejects_non_http_url_scheme() -> None:
         )
 
 
+def test_enterprise_providers_require_custom_base_url() -> None:
+    with pytest.raises(LLMError, match="DATABRICKS_BASE_URL"):
+        build_wire_request(
+            ChatRequest(provider="databricks", prompt="Hi"),
+            env={"DATABRICKS_TOKEN": "dapi-test"},
+        )
+    with pytest.raises(LLMError, match="SNOWFLAKE_CORTEX_BASE_URL"):
+        build_wire_request(
+            ChatRequest(provider="snowflake_cortex", prompt="Hi"),
+            env={"SNOWFLAKE_TOKEN": "sf-test"},
+        )
+
+
 def test_huggingface_and_openai_compatible_endpoints() -> None:
     hf_req = ChatRequest(provider="huggingface", prompt="Hi")
     _, hf_url, hf_headers, _, _ = build_wire_request(hf_req, env={"HF_TOKEN": "hf_test"})
