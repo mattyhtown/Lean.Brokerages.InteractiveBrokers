@@ -54,6 +54,8 @@ Status as checked on 2026-11-15. Re-check a namespace before relying on it.
 | Earnings dates and results | None | No connected source. `Alpaca-trading` `get_news` gives headlines only; `get_corporate_actions` covers dividends, splits and mergers, not earnings. |
 | Macro series (rates, CPI, GDP, jobs) | None | No connected source. `You-finance` needs authentication. |
 | Macro proxies | `Alpaca-trading` `get_index_latest_values` (SPX, VIX), `get_fixed_income_latest_quotes` (Treasury ISINs); `prediction-markets` Kalshi event markets | Market-implied only, not the underlying economic releases. |
+| Sector fund flows (ETF creations and redemptions) | None | No connected source. Unusual Whales is in `.cursor/mcp.json.example` but not connected. |
+| Sector rotation proxy | `Alpaca-trading` `get_stock_bars` on the sector SPDRs (`XLK,XLF,XLE,XLV,XLI,XLY,XLP,XLU,XLB,XLRE,XLC`) | Works. Price change and traded dollar volume (`v` times `vw`) only; this is not money entering or leaving the funds. |
 | Cited web research | `You-research` | Works. A synthesized answer with sources, not a structured data feed. |
 
 ## MCP health
