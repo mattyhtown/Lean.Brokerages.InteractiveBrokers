@@ -1,0 +1,14 @@
+# Copy to Cursor MCP env (mongodb server) or ~/.mcp-env (chmod 600).
+# Never commit real values. Pick ONE auth option.
+
+# Option A — connection string
+# MDB_MCP_CONNECTION_STRING=mongodb+srv://USER:PASSWORD@cluster.mongodb.net/
+
+# Option B — Atlas Admin API (recommended for Atlas)
+# MDB_MCP_API_CLIENT_ID=
+# MDB_MCP_API_CLIENT_SECRET=
+
+# Option C — Atlas Local: use MongoDB plugin + Docker; no vars required.
+
+# Optional
+# MDB_MCP_READ_ONLY=true
