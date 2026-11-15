@@ -12,7 +12,7 @@ from multi_llm.providers import list_provider_statuses
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="multi-llm",
-        description="Unified multi-LLM CLI (Anthropic, OpenAI, Gemini, xAI, and 12+ other ecosystems) + MCP generator",
+        description="Unified multi-LLM CLI (47 registered providers) + MCP config generator",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

@@ -6,11 +6,13 @@ import pytest
 from multi_llm.cli import main as cli_main
 from multi_llm.client import ChatRequest, LLMError, build_wire_request, complete, fanout_complete
 from multi_llm.mcp_templates import SUPPORTED_TARGETS, render_mcp_config
-from multi_llm.providers import PROVIDERS, get_provider, list_provider_statuses
+from multi_llm.providers import ALL_PROVIDER_NAMES, PROVIDERS, get_provider, list_provider_statuses
 
 
 def test_all_expected_providers_registered() -> None:
-    expected = {
+    assert len(PROVIDERS) == len(ALL_PROVIDER_NAMES) >= 45
+    assert set(PROVIDERS.keys()) == set(ALL_PROVIDER_NAMES)
+    required = {
         "anthropic",
         "openai",
         "gemini",
@@ -24,16 +26,25 @@ def test_all_expected_providers_registered() -> None:
         "perplexity",
         "cerebras",
         "openrouter",
+        "huggingface",
+        "moonshot",
+        "dashscope",
+        "zhipu",
+        "nvidia_nim",
+        "github_models",
         "azure_openai",
         "bedrock",
+        "openai_compatible",
         "ollama",
     }
-    assert expected == set(PROVIDERS.keys())
+    assert required.issubset(set(PROVIDERS.keys()))
     assert get_provider("claude").name == "anthropic"
     assert get_provider("chatgpt").name == "openai"
     assert get_provider("grok").name == "xai"
     assert get_provider("google").name == "gemini"
-    assert get_provider("vllm").name == "ollama"
+    assert get_provider("vllm").name == "openai_compatible"
+    assert get_provider("kimi").name == "moonshot"
+    assert get_provider("qwen").name == "dashscope"
 
 
 def test_provider_statuses_never_leak_secret_values() -> None:
@@ -236,7 +247,7 @@ def test_mcp_templates_use_official_servers_and_no_shadow_mcps(target: str) -> N
 def test_cli_providers_and_mcp_config(capsys: pytest.CaptureFixture[str]) -> None:
     cli_main(["providers", "--json"])
     out = json.loads(capsys.readouterr().out)
-    assert len(out) == 16
+    assert len(out) == len(ALL_PROVIDER_NAMES)
 
     cli_main(["mcp-config", "--target", "codex"])
     codex_toml = capsys.readouterr().out
@@ -250,4 +261,18 @@ def test_rejects_non_http_url_scheme() -> None:
             ChatRequest(provider="ollama", prompt="test"),
             env={"OLLAMA_BASE_URL": "file:///etc/passwd"},
         )
+
+
+def test_huggingface_and_openai_compatible_endpoints() -> None:
+    hf_req = ChatRequest(provider="huggingface", prompt="Hi")
+    _, hf_url, hf_headers, _, _ = build_wire_request(hf_req, env={"HF_TOKEN": "hf_test"})
+    assert hf_url == "https://router.huggingface.co/v1/chat/completions"
+    assert hf_headers["Authorization"] == "Bearer hf_test"
+
+    compat_req = ChatRequest(provider="openai_compatible", prompt="Hi")
+    _, compat_url, _, _, _ = build_wire_request(
+        compat_req,
+        env={"OPENAI_COMPATIBLE_BASE_URL": "http://127.0.0.1:8080/v1"},
+    )
+    assert compat_url == "http://127.0.0.1:8080/v1/chat/completions"
 

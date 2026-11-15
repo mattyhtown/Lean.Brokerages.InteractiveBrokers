@@ -10,7 +10,7 @@ Account-level MCP and LLM provider reference for this workspace. **Do not commit
 | **MongoDB** | `mongodb-mcp-server` (official plugin / package) | `MDB_MCP_*` env (see [`mcp-env.example`](mcp-env.example)) | `list-connections` -> `connect` -> `list-databases` |
 | **Unusual Whales** | `https://api.unusualwhales.com/api/mcp` or `@unusualwhales/mcp` | Bearer API key (`UW_API_KEY`) or web OAuth (`mcp.unusualwhales.com` on ChatGPT/Claude/Grok web) | Flow / market read tool |
 
-For programmatic multi-LLM routing and config generation across **Anthropic**, **OpenAI**, **Google Gemini**, **xAI Grok**, **Mistral**, **Cohere**, **DeepSeek**, **Groq**, **Together AI**, **Fireworks AI**, **Perplexity**, **Cerebras**, **OpenRouter**, **Azure OpenAI**, **AWS Bedrock**, and **Ollama / local open-weight models**, use the Poetry package in [`../multi-llm/`](../multi-llm/) and key-free env template [`llm-env.example`](llm-env.example).
+For programmatic multi-LLM routing across **every major API** (45+ registered providers — Anthropic, OpenAI, Gemini, Grok, Cohere, Mistral, DeepSeek, Groq, Together, Fireworks, Perplexity, Cerebras, OpenRouter, Hugging Face, NVIDIA NIM, Moonshot/Kimi, Qwen/DashScope, GLM/Zhipu, Azure, Bedrock, watsonx, Vertex, Databricks, Snowflake Cortex, Vercel/Cloudflare gateways, GitHub Models, and generic **vLLM / LM Studio / Ollama**), use the Poetry package in [`../multi-llm/`](../multi-llm/) (`poetry run multi-llm providers`) and key-free env template [`llm-env.example`](llm-env.example).
 
 ---
 

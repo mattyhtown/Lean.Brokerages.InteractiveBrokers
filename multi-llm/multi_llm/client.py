@@ -233,13 +233,18 @@ def build_wire_request(
         return spec, url, headers, body, secrets
 
     base_url = spec.base_url
-    if spec.name == "ollama":
-        custom_base = (
-            source.get("OLLAMA_BASE_URL", "").strip()
-            or source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
-        )
+    if spec.endpoint_env:
+        custom_base = source.get(spec.endpoint_env, "").strip()
         if custom_base:
             base_url = custom_base
+    if spec.name == "openai_compatible":
+        fallback = source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
+        if fallback:
+            base_url = fallback
+    elif spec.name == "ollama" and not source.get(spec.endpoint_env or "", "").strip():
+        fallback = source.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
+        if fallback:
+            base_url = fallback
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {}
     if api_key:

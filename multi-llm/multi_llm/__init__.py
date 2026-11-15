@@ -2,9 +2,16 @@
 
 from multi_llm.client import ChatRequest, ChatResponse, complete, fanout_complete
 from multi_llm.mcp_templates import SUPPORTED_TARGETS, render_mcp_config
-from multi_llm.providers import PROVIDERS, ProviderSpec, get_provider, list_provider_statuses
+from multi_llm.providers import (
+    ALL_PROVIDER_NAMES,
+    PROVIDERS,
+    ProviderSpec,
+    get_provider,
+    list_provider_statuses,
+)
 
 __all__ = [
+    "ALL_PROVIDER_NAMES",
     "ChatRequest",
     "ChatResponse",
     "PROVIDERS",
