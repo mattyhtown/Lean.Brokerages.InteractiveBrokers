@@ -60,6 +60,9 @@ Status as checked on 2026-11-15. Re-check a namespace before relying on it.
 | Sector rotation proxy | `Alpaca-trading` `get_stock_bars` on the sector SPDRs (`XLK,XLF,XLE,XLV,XLI,XLY,XLP,XLU,XLB,XLRE,XLC`) | Works. Price change and traded dollar volume (`v` times `vw`) only; this is not money entering or leaving the funds. |
 | Institutional ownership (13F holdings), insider trades, dark pool totals | None | No connected source. `Sp-global` needs authentication; Unusual Whales is not connected. |
 | Large or off-exchange prints | `Alpaca-trading` `get_stock_trades` | Works, with size `s` and venue `x` per print, but there is no size filter. A sample of AAPL returned 15 prints inside 20 milliseconds, so only narrow time windows are practical. |
+| Market news headlines | `Alpaca-trading` `get_news` (by symbol and date range) | Works. Articles come from Benzinga and fiscal.ai only; body text was empty in every article sampled. |
+| MT Newswires | None | No connected source. IB sells it as a TWS research subscription, but the TWS API only serves Briefing.com (`BRFG`, `BRFUPDN`), Dow Jones Newsletters (`DJNL`) and Benzinga (`BZ`, paid). The LEAN IB plugin and `ib-lean-bridge` have no news calls. |
+| Trending market stories | `X` `search_news` | Works. Machine-written summaries of posts on X; treat as unverified. |
 | Cited web research | `You-research` | Works. A synthesized answer with sources, not a structured data feed. |
 
 ## MCP health
