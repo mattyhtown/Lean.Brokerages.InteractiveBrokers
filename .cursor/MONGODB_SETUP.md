@@ -13,7 +13,7 @@ Optionally set `MDB_MCP_READ_ONLY=true` to enforce read-only operations. See [`m
 ## Where to Set Credentials by LLM Client
 
 - **Cursor**: **Settings -> Tools & MCP -> mongodb -> Environment**, then restart Cursor.
-- **Anthropic Claude Code**: `claude mcp add mongodb -e MDB_MCP_API_CLIENT_ID=... -e MDB_MCP_API_CLIENT_SECRET=... -- npx -y mongodb-mcp-server@latest`
+- **Anthropic Claude Code**: `claude mcp add mongodb -e MDB_MCP_API_CLIENT_ID=... -e MDB_MCP_API_CLIENT_SECRET=... -- npx -y mongodb-mcp-server@3.3.0`
 - **Anthropic Claude Desktop**: Add under `mcpServers.mongodb.env` in `claude_desktop_config.json` (see [`clients/claude_desktop_config.json.example`](clients/claude_desktop_config.json.example)).
 - **OpenAI Codex**: Add under `[mcp_servers.mongodb.env]` in `~/.codex/config.toml` (see [`clients/codex_config.toml.example`](clients/codex_config.toml.example)).
 - **Google Gemini CLI**: Add under `mcpServers.mongodb.env` in `~/.gemini/settings.json` (see [`clients/gemini_settings.json.example`](clients/gemini_settings.json.example)).

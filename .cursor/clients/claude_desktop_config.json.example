@@ -1,15 +1,22 @@
 {
   "mcpServers": {
+    "supabase": {
+      "command": "npx",
+      "args": ["-y", "@supabase/mcp-server-supabase@0.17.0", "--read-only"],
+      "env": {
+        "SUPABASE_ACCESS_TOKEN": "YOUR_SUPABASE_ACCESS_TOKEN"
+      }
+    },
     "unusualwhales": {
       "command": "npx",
-      "args": ["-y", "@unusualwhales/mcp"],
+      "args": ["-y", "@unusualwhales/mcp@1.2.0"],
       "env": {
         "UW_API_KEY": "YOUR_UW_API_KEY"
       }
     },
     "mongodb": {
       "command": "npx",
-      "args": ["-y", "mongodb-mcp-server@latest"],
+      "args": ["-y", "mongodb-mcp-server@3.3.0"],
       "env": {
         "MDB_MCP_API_CLIENT_ID": "YOUR_ATLAS_CLIENT_ID",
         "MDB_MCP_API_CLIENT_SECRET": "YOUR_ATLAS_CLIENT_SECRET",

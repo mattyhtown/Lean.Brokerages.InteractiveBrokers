@@ -10,7 +10,7 @@ bearer_token_env_var = "UW_API_KEY"
 
 [mcp_servers.mongodb]
 command = "npx"
-args = ["-y", "mongodb-mcp-server@latest"]
+args = ["-y", "mongodb-mcp-server@3.3.0"]
 
 [mcp_servers.mongodb.env]
 MDB_MCP_API_CLIENT_ID = "YOUR_ATLAS_CLIENT_ID"

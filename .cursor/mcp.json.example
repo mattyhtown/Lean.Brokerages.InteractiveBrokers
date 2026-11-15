@@ -9,7 +9,7 @@
     },
     "unusualwhales-local": {
       "command": "npx",
-      "args": ["-y", "@unusualwhales/mcp"],
+      "args": ["-y", "@unusualwhales/mcp@1.2.0"],
       "env": {
         "UW_API_KEY": "YOUR_API_KEY"
       }

@@ -34,7 +34,7 @@
     "mongodb": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "mongodb-mcp-server@latest"],
+      "args": ["-y", "mongodb-mcp-server@3.3.0"],
       "env": {
         "MDB_MCP_API_CLIENT_ID": "${input:mdb-client-id}",
         "MDB_MCP_API_CLIENT_SECRET": "${input:mdb-client-secret}",
