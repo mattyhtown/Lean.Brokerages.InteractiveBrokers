@@ -33,9 +33,14 @@ class FakeIB:
     """Records what the bridge asks IB to do."""
 
     instances: list["FakeIB"] = []
+    active_connections: int = 0
+    max_concurrent_connections: int = 0
+    connect_delay: float = 0.0
     connect_error: Exception | None = None
     details: list[Contract] = []
     what_if_result: object = None
+    place_order_status: str = "Submitted"
+    read_error: tuple[int, str] | None = None
     existing_trades: list[Trade] = []
     open_orders_reply: bool = True
 
@@ -55,11 +60,19 @@ class FakeIB:
             raise FakeIB.connect_error
         self.connect_kwargs = {"host": host, "port": port, "clientId": clientId, "readonly": readonly}
         self.connected = True
+        FakeIB.active_connections += 1
+        FakeIB.max_concurrent_connections = max(
+            FakeIB.max_concurrent_connections, FakeIB.active_connections
+        )
+        if FakeIB.connect_delay:
+            await asyncio.sleep(FakeIB.connect_delay)
 
     def isConnected(self) -> bool:
         return self.connected
 
     def disconnect(self) -> None:
+        if self.connected:
+            FakeIB.active_connections -= 1
         self.connected = False
 
     async def qualifyContractsAsync(self, contract):
@@ -68,10 +81,16 @@ class FakeIB:
 
     async def reqContractDetailsAsync(self, contract):
         self.requested = contract
+        if FakeIB.read_error:
+            self.errorEvent.emit(1, FakeIB.read_error[0], FakeIB.read_error[1], contract)
+            return []
         return [SimpleNamespace(contract=c) for c in FakeIB.details]
 
     async def reqHistoricalDataAsync(self, contract, **kwargs):
         self.history_kwargs = kwargs
+        if FakeIB.read_error:
+            self.errorEvent.emit(1, FakeIB.read_error[0], FakeIB.read_error[1], contract)
+            return []
         return [SimpleNamespace(date="2026-11-13", open=1.0, high=2.0, low=0.5, close=1.5, volume=10)]
 
     async def whatIfOrderAsync(self, contract, order):
@@ -83,7 +102,13 @@ class FakeIB:
     def placeOrder(self, contract, order):
         order.orderId = 7
         self.placed.append((contract, order))
-        return Trade(contract, order, OrderStatus(orderId=7, status="Submitted", remaining=order.totalQuantity))
+        if FakeIB.place_order_status in server.REJECTED_STATUSES:
+            self.errorEvent.emit(7, 201, "Order rejected - insufficient margin", contract)
+        return Trade(
+            contract,
+            order,
+            OrderStatus(orderId=7, status=FakeIB.place_order_status, remaining=order.totalQuantity),
+        )
 
     def openTrades(self):
         """Only knows the orders IB has replayed to this connection."""
@@ -96,6 +121,8 @@ class FakeIB:
         return FakeIB.existing_trades
 
     async def reqAllOpenOrdersAsync(self):
+        if FakeIB.read_error:
+            self.errorEvent.emit(0, FakeIB.read_error[0], FakeIB.read_error[1], None)
         return FakeIB.existing_trades
 
     def cancelOrder(self, order):
@@ -109,9 +136,14 @@ def eurusd() -> Contract:
 class BridgeTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         FakeIB.instances = []
+        FakeIB.active_connections = 0
+        FakeIB.max_concurrent_connections = 0
+        FakeIB.connect_delay = 0.0
         FakeIB.connect_error = None
         FakeIB.details = [eurusd()]
         FakeIB.what_if_result = OrderState(initMarginChange="333.0", commission=2.0, commissionCurrency="USD")
+        FakeIB.place_order_status = "Submitted"
+        FakeIB.read_error = None
         FakeIB.existing_trades = []
         FakeIB.open_orders_reply = True
         patches = [
@@ -143,12 +175,26 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         for args in [
             ("HOLD", 1, "MKT", None),
             ("BUY", 0, "MKT", None),
+            ("BUY", float("nan"), "MKT", None),
+            ("BUY", float("inf"), "MKT", None),
+            ("BUY", True, "MKT", None),
             ("BUY", 1, "LMT", None),
             ("BUY", 1, "LMT", 0),
+            ("BUY", 1, "LMT", float("nan")),
+            ("BUY", 1, "LMT", float("inf")),
+            ("BUY", 1, "MKT", 1.05),
             ("BUY", 1, "STP", 1.0),
         ]:
             with self.subTest(args=args), self.assertRaises(ValueError):
                 server._build_order(*args, tif="DAY", account="")
+
+    async def test_missing_ib_dependency_raises_runtime_error_before_order_build(self) -> None:
+        with mock.patch.object(server, "IB", None):
+            with self.assertRaisesRegex(RuntimeError, "requirements.txt"):
+                await server.preview_order("EURUSD", "BUY", 10, order_type="MKT")
+            with mock.patch.object(server, "ORDERS_ENABLED", True):
+                with self.assertRaisesRegex(RuntimeError, "requirements.txt"):
+                    await server.place_order("EURUSD", "BUY", 10, order_type="MKT", confirm=True)
 
     def test_ping_reports_orders_disabled(self) -> None:
         self.assertFalse(json.loads(server.ping())["ordersEnabled"])
@@ -205,6 +251,8 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
         self.assertTrue(result["sent"])
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["rejected"])
         self.assertEqual(len(self.ib.placed), 1)
         contract, order = self.ib.placed[0]
         self.assertEqual(contract.conId, 12087792)
@@ -213,6 +261,44 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["order"]["status"], "Submitted")
         self.assertEqual(result["order"]["limitPrice"], 1.05)
         self.assertFalse(self.ib.connect_kwargs["readonly"])
+
+    async def test_place_order_reports_rejection(self) -> None:
+        FakeIB.place_order_status = "Inactive"
+        with mock.patch.object(server, "ORDERS_ENABLED", True):
+            result = json.loads(
+                await server.place_order(
+                    "EURUSD", "BUY", 20000, sec_type="CASH", exchange="IDEALPRO", limit_price=1.05, confirm=True
+                )
+            )
+        self.assertFalse(result["sent"])
+        self.assertFalse(result["accepted"])
+        self.assertTrue(result["rejected"])
+        self.assertEqual(result["order"]["status"], "Inactive")
+        self.assertIn("201: Order rejected - insufficient margin", result["messages"])
+
+    async def test_market_preview_reports_null_limit_price(self) -> None:
+        result = json.loads(
+            await server.preview_order("EURUSD", "BUY", 20000, sec_type="CASH", exchange="IDEALPRO", order_type="MKT")
+        )
+        self.assertIsNone(result["order"]["limitPrice"])
+
+    async def test_read_tools_surface_ib_error_messages(self) -> None:
+        FakeIB.read_error = (162, "No market data permissions")
+        hist = json.loads(await server.get_historical_bars("EURUSD", sec_type="CASH", exchange="IDEALPRO"))
+        details = json.loads(await server.get_contract_details("EURUSD", sec_type="CASH", exchange="IDEALPRO"))
+        orders = json.loads(await server.get_open_orders())
+        for payload in (hist, details, orders):
+            self.assertIn("162: No market data permissions", payload["messages"])
+
+    async def test_concurrent_sessions_are_serialized(self) -> None:
+        FakeIB.connect_delay = 0.03
+        await asyncio.gather(
+            server.get_open_orders(),
+            server.get_contract_details("EURUSD", sec_type="CASH", exchange="IDEALPRO"),
+            server.get_historical_bars("EURUSD", sec_type="CASH", exchange="IDEALPRO"),
+        )
+        self.assertEqual(FakeIB.max_concurrent_connections, 1)
+        self.assertEqual(FakeIB.active_connections, 0)
 
     async def test_cancel_order_needs_flag_and_known_order(self) -> None:
         with self.assertRaises(PermissionError):

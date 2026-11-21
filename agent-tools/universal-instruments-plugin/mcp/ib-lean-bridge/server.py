@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
+from weakref import WeakKeyDictionary
 
 from mcp.server.fastmcp import FastMCP
 
@@ -33,7 +35,35 @@ ORDERS_ENABLED = os.environ.get("IB_ALLOW_ORDERS") == "1"
 ORDER_SETTLE_SECONDS = 5.0
 OPEN_ORDERS_TIMEOUT_SECONDS = 10.0
 PENDING_STATUSES = {"PendingSubmit", "ApiPending", "PendingCancel"}
+REJECTED_STATUSES = {"Inactive", "Cancelled", "ApiCancelled"}
 IB_UNSET_DOUBLE = 1.7976931348623157e308
+
+# One IB_CLIENT_ID cannot hold two concurrent TWS/Gateway sessions; serialize per event loop.
+_SESSION_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = WeakKeyDictionary()
+
+
+def _get_session_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _SESSION_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SESSION_LOCKS[loop] = lock
+    return lock
+
+
+def _require_ib() -> None:
+    if IB is None:
+        raise RuntimeError("Install dependencies: pip install -r requirements.txt")
+
+
+def _clean_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if value == IB_UNSET_DOUBLE or not math.isfinite(value):
+            return None
+        return float(value)
+    return None
 
 
 def _build_contract(
@@ -44,6 +74,7 @@ def _build_contract(
     expiry: str = "",
     con_id: int = 0,
 ) -> "Contract":
+    _require_ib()
     contract = Contract()
     contract.secType = sec_type
     contract.exchange = exchange
@@ -68,17 +99,25 @@ def _build_order(
     tif: str,
     account: str,
 ) -> "Order":
+    _require_ib()
     side = action.upper()
     if side not in ("BUY", "SELL"):
         raise ValueError("action must be BUY or SELL")
-    if quantity <= 0:
-        raise ValueError("quantity must be greater than zero")
+    if isinstance(quantity, bool) or not math.isfinite(quantity) or quantity <= 0:
+        raise ValueError("quantity must be a finite number greater than zero")
     kind = order_type.upper()
     if kind == "LMT":
-        if limit_price is None or limit_price <= 0:
-            raise ValueError("limit_price is required for a LMT order")
+        if (
+            limit_price is None
+            or isinstance(limit_price, bool)
+            or not math.isfinite(limit_price)
+            or limit_price <= 0
+        ):
+            raise ValueError("limit_price must be a finite number greater than zero for a LMT order")
         order = LimitOrder(side, quantity, limit_price)
     elif kind == "MKT":
+        if limit_price is not None:
+            raise ValueError("limit_price must not be set for a MKT order")
         order = MarketOrder(side, quantity)
     else:
         raise ValueError("order_type must be LMT or MKT")
@@ -91,23 +130,23 @@ def _build_order(
 @asynccontextmanager
 async def _session(readonly: bool) -> AsyncIterator[tuple["IB", list[str]]]:
     """Connect to Gateway/TWS and collect the error messages IB sends meanwhile."""
-    if IB is None:
-        raise RuntimeError("Install dependencies: pip install -r requirements.txt")
-    ib = IB()
-    messages: list[str] = []
-    ib.errorEvent += lambda req_id, code, text, contract: messages.append(f"{code}: {text}")
-    try:
+    _require_ib()
+    async with _get_session_lock():
+        ib = IB()
+        messages: list[str] = []
+        ib.errorEvent += lambda req_id, code, text, contract: messages.append(f"{code}: {text}")
         try:
-            await ib.connectAsync(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, readonly=readonly)
-        except (OSError, asyncio.TimeoutError) as e:
-            raise RuntimeError(
-                f"Could not connect to IB at {IB_HOST}:{IB_PORT} ({e or type(e).__name__}). "
-                "Start IB Gateway or TWS with the API enabled."
-            ) from e
-        yield ib, messages
-    finally:
-        if ib.isConnected():
-            ib.disconnect()
+            try:
+                await ib.connectAsync(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, readonly=readonly)
+            except (OSError, asyncio.TimeoutError) as e:
+                raise RuntimeError(
+                    f"Could not connect to IB at {IB_HOST}:{IB_PORT} ({e or type(e).__name__}). "
+                    "Start IB Gateway or TWS with the API enabled."
+                ) from e
+            yield ib, messages
+        finally:
+            if ib.isConnected():
+                ib.disconnect()
 
 
 async def _qualify(ib: "IB", contract: "Contract") -> "Contract":
@@ -142,7 +181,7 @@ def _trade_summary(trade: Any) -> dict[str, Any]:
         "action": order.action,
         "quantity": order.totalQuantity,
         "orderType": order.orderType,
-        "limitPrice": None if order.lmtPrice == IB_UNSET_DOUBLE else order.lmtPrice,
+        "limitPrice": _clean_float(order.lmtPrice),
         "tif": order.tif,
         "status": status.status,
         "filled": status.filled,
@@ -210,7 +249,7 @@ async def get_historical_bars(
     """
     if sec_type == "CASH" and what_to_show == "TRADES":
         what_to_show = "MIDPOINT"
-    async with _session(readonly=True) as (ib, _):
+    async with _session(readonly=True) as (ib, messages):
         contract = await _qualify(
             ib, _build_contract(symbol, sec_type, exchange, currency, expiry, con_id)
         )
@@ -241,6 +280,7 @@ async def get_historical_bars(
                 "what_to_show": what_to_show,
                 "contract": _contract_summary(contract),
                 "bars": rows,
+                "messages": messages,
             },
             indent=2,
         )
@@ -255,19 +295,23 @@ async def get_contract_details(
     expiry: str = "",
 ) -> str:
     """Resolve and return IB contract details (chain seed for options/futures/bonds)."""
-    async with _session(readonly=True) as (ib, _):
+    async with _session(readonly=True) as (ib, messages):
         contract = _build_contract(symbol, sec_type, exchange, currency, expiry)
         details = await ib.reqContractDetailsAsync(contract)
         payload = [_contract_summary(d.contract) for d in details[:20]]
-        return json.dumps({"count": len(details), "contracts": payload}, indent=2)
+        return json.dumps(
+            {"count": len(details), "contracts": payload, "messages": messages}, indent=2
+        )
 
 
 @mcp.tool()
 async def get_open_orders() -> str:
     """List open orders on the IB account, from every API client and TWS itself."""
-    async with _session(readonly=True) as (ib, _):
+    async with _session(readonly=True) as (ib, messages):
         trades = await ib.reqAllOpenOrdersAsync()
-        return json.dumps({"orders": [_trade_summary(t) for t in trades]}, indent=2)
+        return json.dumps(
+            {"orders": [_trade_summary(t) for t in trades], "messages": messages}, indent=2
+        )
 
 
 @mcp.tool()
@@ -308,7 +352,7 @@ async def preview_order(
                     "action": order.action,
                     "quantity": order.totalQuantity,
                     "orderType": order.orderType,
-                    "limitPrice": limit_price,
+                    "limitPrice": _clean_float(order.lmtPrice),
                     "tif": order.tif,
                     "account": order.account or None,
                 },
@@ -318,9 +362,9 @@ async def preview_order(
                 "initMarginAfter": state.initMarginAfter,
                 "maintMarginAfter": state.maintMarginAfter,
                 "equityWithLoanAfter": state.equityWithLoanAfter,
-                "commission": None if state.commission == IB_UNSET_DOUBLE else state.commission,
-                "minCommission": None if state.minCommission == IB_UNSET_DOUBLE else state.minCommission,
-                "maxCommission": None if state.maxCommission == IB_UNSET_DOUBLE else state.maxCommission,
+                "commission": _clean_float(state.commission),
+                "minCommission": _clean_float(state.minCommission),
+                "maxCommission": _clean_float(state.maxCommission),
                 "commissionCurrency": state.commissionCurrency,
                 "warningText": state.warningText,
                 "messages": messages,
@@ -361,8 +405,18 @@ async def place_order(
         )
         trade = ib.placeOrder(contract, order)
         await _wait_while_pending(trade)
+        status = trade.orderStatus.status
+        rejected = status in REJECTED_STATUSES
+        accepted = not rejected and status not in PENDING_STATUSES
         return json.dumps(
-            {"sent": True, "order": _trade_summary(trade), "messages": messages}, indent=2
+            {
+                "sent": not rejected,
+                "accepted": accepted,
+                "rejected": rejected,
+                "order": _trade_summary(trade),
+                "messages": messages,
+            },
+            indent=2,
         )
 
 
