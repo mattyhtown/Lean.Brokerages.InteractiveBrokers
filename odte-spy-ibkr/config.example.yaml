@@ -1,0 +1,72 @@
+ib:
+  host: 127.0.0.1
+  port: 7497
+  client_id: 7
+  paper: true
+
+safety:
+  live_trading: false
+  read_only: true
+  enable_orders: false
+
+providers:
+  enabled: ibkr,unusual_whales,alpaca
+
+strategy:
+  underlying: SPY
+  credit_side: put
+  min_minutes_after_open: 30
+  min_credit: 0.15
+  spread_width: 1.0
+  max_contracts: 1
+  max_daily_loss: 500
+  entry_cutoff: "15:00"
+  flatten_time: "15:45"
+  poll_interval_sec: 30
+  stop_loss_credit_multiple: 0  # 0 = no stop; 2.0 stops at twice the entry credit
+
+unusual_whales:
+  base_url: https://api.unusualwhales.com
+  required: false
+  min_strength: 0.35
+  mode: alerts_only
+  poll_interval_sec: 120
+  cache_ttl_sec: 90
+  stale_block_sec: 600
+  backtest_cache_dir: data/cache/uw
+  backtest_mode: neutral  # session without UW cache: neutral | skip | block
+
+alpaca:
+  data_url: https://data.alpaca.markets
+
+coinbase:
+  products: BTC-USD,ETH-USD
+  risk_off_threshold_pct: 3.0
+
+macro:
+  enabled: true
+  tier1_blackout_before_min: 30
+  tier1_blackout_after_min: 45
+  headline_intensity_block: 0.75
+  size_scale_under_macro_stress: 0.5
+  flow_conflict: downsize
+  backtest_mode: permissive
+
+backtest:
+  equity_base: 100000
+  rolling_window_days: 60
+  sharpe_target: 1.5
+  slippage_ticks: 1
+  commission_per_contract: 0.65
+  cache_dir: data/cache
+  decision_interval_min: 5
+  walk_forward_train_days: 60
+  walk_forward_test_days: 20
+  require_sharpe_pass: false  # true = exit 1 below sharpe_target without the CLI flag
+
+risk:
+  sharpe_gate_enabled: false
+  sharpe_min: 1.5
+  sharpe_window_days: 60
+  sharpe_min_obs: 60
+  journal_path: data/journal/daily_pnl.jsonl
