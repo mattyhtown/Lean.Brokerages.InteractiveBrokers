@@ -36,7 +36,7 @@ Every loading step can be run again over the same dates without creating duplica
 
 ## Setup
 
-1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project that already has the earlier files only needs the ones added since; `007_model.sql` is the newest.
+1. Create the tables by running the files in `supabase/migrations/` in order in the Supabase SQL editor. A project that already has the earlier files only needs the ones added since; `008_text_dated_by_symbol_bars.sql` is the newest.
 2. Edit `watchlist.txt` to the symbols and company names you want to track.
 3. To load podcasts, add their feed addresses to `podcasts.txt`. It ships with none. See [Podcasts](#podcasts).
 4. Set these environment variables:
@@ -210,7 +210,7 @@ It also works with `all`. The extra installs PyTorch and Transformers, about 5 G
 - **Benzinga.** Each headline is one passage. Only the headline is scored, not the article. It counts toward the symbol it was requested for, so a headline Benzinga files under several loaded symbols is stored and scored once for each. It is timestamped with Benzinga's `created` time.
 - **Podcasts.** A transcript is cut into passages of up to 800 characters at sentence ends, and the ones that mention a ticker are scored like newsletter passages. "Apple Podcasts", "Google Podcasts" and "Amazon Music" do not count as mentions of those companies, because shows name them to say where to listen. An episode is timestamped with the publication time in its feed.
 - **Alpha Vantage.** Each article is stored once for each loaded symbol Alpha Vantage scored it for, with two numbers Alpha Vantage computes itself: how relevant the article is to that symbol (above 0, up to 1) and its sentiment toward that symbol (Alpha Vantage calls -0.35 and below bearish and 0.35 and above bullish). FinBERT is not run on these articles. On a row, `alphavantage_sentiment` is the average of the day's sentiment scores weighted by relevance, and `alphavantage_relevance` is the plain average relevance; both are null on a day without articles. An article is timestamped with Alpha Vantage's `time_published`.
-- **Dates.** A newsletter, news digest, Benzinga headline, podcast episode or Alpha Vantage article counts toward the first trading day whose 16:00 New York close comes after it arrived, so a row never uses text from after the close it is paired with. Text with no trading day within the next 5 days is left out.
+- **Dates.** A newsletter, news digest, Benzinga headline, podcast episode or Alpha Vantage article counts toward the first trading day on which its symbol has a bar and whose 16:00 New York close comes after it arrived, so a row never uses text from after the close it is paired with. A trading day on which the symbol has no bar is skipped. Text with no such day within the next 5 days is left out.
 - **Market sentiment.** `market_news_sentiment` is the index value for the calendar day 21 days before the row's trading day, and null when that day is not loaded. The Fed updates the index about once a week. In the four weeks checked, its file was modified on a Thursday or Friday and ended on the Sunday before, which makes the newest published day up to 12 days old; 21 days leaves room for one missed release.
 - **Options.** A row carries the ORATS metrics for its own trading day. ORATS takes its end-of-day snapshot about 14 minutes before the close, so those values exist before the close the row is paired with. `options_daily.source_updated_at` holds ORATS's own timestamp for each row.
 - **Trading days.** The calendar is every date on which any symbol has a loaded close.
@@ -226,7 +226,7 @@ It also works with `all`. The extra installs PyTorch and Transformers, about 5 G
 - The model's settings were chosen once and not tuned on this data. The walk-forward test retrains every 20 sessions, while a daily schedule retrains every day.
 - `train` was checked on made-up histories, not on real loaded data: the hosted tables were empty when it was written.
 - Factors are matched by today's ticker. A company that changed its ticker has no factors under the old one.
-- Text counts only on a row of its own symbol. When the symbol has no bar on the trading day its text falls on, that text is not counted on any row.
+- Text counts only on a row of its own symbol. When the symbol has no bar on the first trading day after its text arrived, the text counts on the symbol's next bar and can be up to 5 days old there. When there is no bar within 5 days, it is not counted on any row.
 - On early-close days (13:00 New York), text that arrives between 13:00 and 16:00 is paired with that day's close even though the close has already happened.
 - News sentiment is FinBERT's reading of sentences Perplexity wrote, not of the original articles, and the same question can be answered differently on another run.
 - News history starts on the first day `news` ran. Earlier rows have `news_item_count` 0 because nothing was collected, not because there was no news.

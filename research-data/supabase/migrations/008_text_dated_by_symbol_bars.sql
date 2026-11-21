@@ -1,0 +1,193 @@
+-- Dates text by its own symbol's bars.
+-- Text was dated to the first session after it arrived, where a session is a date on
+-- which any symbol has a loaded close. When its own symbol had no bar on that session,
+-- the text matched no row and was not counted. It now counts on the symbol's next bar
+-- within 5 days, as it did before the session calendar was introduced.
+-- The columns do not change, so the view is replaced in place and keeps its grants.
+
+-- One row per ticker and trading day that has a loaded close.
+-- The session calendar is every date with a loaded close for any symbol, so a
+-- symbol missing a bar gets a null return instead of a return to a later day.
+-- A newsletter, news digest, Benzinga headline or podcast episode counts toward the
+-- first of its symbol's bars whose 16:00 New York close comes after it arrived, so
+-- features never use text from after that close. A session on which the symbol has
+-- no bar is skipped. A podcast episode arrived at the publication time its feed
+-- states. Text with no such bar within 5 days is left out. Options
+-- metrics are the ORATS row for the same session, which ORATS snapshots before
+-- the close. An Alpha Vantage article is dated the same way from its publication
+-- time; alphavantage_sentiment is Alpha Vantage's own score for the symbol,
+-- averaged over the day's articles with each weighted by its relevance to the
+-- symbol. market_news_sentiment is the index value for the day 21 days before
+-- the session: the San Francisco Fed publishes about weekly and its newest day
+-- can be 12 days old just before a release, so 21 leaves room for one missed
+-- release.
+-- `close` is the raw close. Forward returns are close to close, null until the
+-- later closes are loaded, and adjusted for the splits and dividends in
+-- price_adjustments. returns_adjusted is true when the symbol's factors are known
+-- through the last close its returns use; otherwise a split or dividend inside
+-- the return may be missing.
+create or replace view public.training_rows with (security_invoker = true) as
+with sessions as (
+  select
+    trade_date,
+    (trade_date + time '16:00') at time zone 'America/New_York' as close_at,
+    row_number() over (order by trade_date) as session_number
+  from (select distinct trade_date from public.daily_prices) loaded_dates
+),
+adjustment_rows as (
+  select
+    a.symbol,
+    (r.factor ->> 'through_date')::date as through_date,
+    (r.factor ->> 'price_factor')::numeric * (r.factor ->> 'split_factor')::numeric as scale
+  from public.price_adjustments a
+  cross join lateral jsonb_array_elements(a.factors) as r (factor)
+),
+prices as (
+  select
+    p.symbol,
+    p.trade_date,
+    p.close,
+    s.session_number,
+    p.close * coalesce(adjustment.scale, 1) as adjusted_close
+  from public.daily_prices p
+  join sessions s on s.trade_date = p.trade_date
+  -- The factors of a date are those of the first entry dated on or after it.
+  left join lateral (
+    select r.scale
+    from adjustment_rows r
+    where r.symbol = p.symbol and r.through_date >= p.trade_date
+    order by r.through_date
+    limit 1
+  ) adjustment on true
+),
+mentions as (
+  select
+    t.symbol,
+    n.source,
+    p.newsletter_id,
+    n.received_at,
+    p.sentiment_positive,
+    p.sentiment_neutral,
+    p.sentiment_negative
+  from public.newsletter_passages p
+  join public.newsletters n on n.id = p.newsletter_id
+  cross join lateral unnest(p.tickers) as t (symbol)
+  where p.sentiment_label is not null
+),
+dated_mentions as (
+  select m.*, next_bar.trade_date as signal_date
+  from mentions m
+  cross join lateral (
+    select d.trade_date
+    from public.daily_prices d
+    where d.symbol = m.symbol
+      -- The two date bounds only narrow the index scan; the two close times decide.
+      and d.trade_date >= (m.received_at at time zone 'America/New_York')::date
+      and d.trade_date <= ((m.received_at + interval '5 days') at time zone 'America/New_York')::date
+      and (d.trade_date + time '16:00') at time zone 'America/New_York' > m.received_at
+      and (d.trade_date + time '16:00') at time zone 'America/New_York' <= m.received_at + interval '5 days'
+    order by d.trade_date
+    limit 1
+  ) next_bar
+),
+sentiment as (
+  select
+    symbol,
+    signal_date,
+    count(*) filter (where source = 'gmail') as passage_count,
+    count(distinct newsletter_id) filter (where source = 'gmail') as newsletter_count,
+    avg(sentiment_positive) filter (where source = 'gmail') as sentiment_positive,
+    avg(sentiment_neutral) filter (where source = 'gmail') as sentiment_neutral,
+    avg(sentiment_negative) filter (where source = 'gmail') as sentiment_negative,
+    avg(sentiment_positive - sentiment_negative) filter (where source = 'gmail') as sentiment_net,
+    count(*) filter (where source = 'perplexity') as news_item_count,
+    avg(sentiment_positive) filter (where source = 'perplexity') as news_sentiment_positive,
+    avg(sentiment_neutral) filter (where source = 'perplexity') as news_sentiment_neutral,
+    avg(sentiment_negative) filter (where source = 'perplexity') as news_sentiment_negative,
+    avg(sentiment_positive - sentiment_negative) filter (where source = 'perplexity') as news_sentiment_net,
+    count(*) filter (where source = 'benzinga') as benzinga_headline_count,
+    avg(sentiment_positive) filter (where source = 'benzinga') as benzinga_sentiment_positive,
+    avg(sentiment_neutral) filter (where source = 'benzinga') as benzinga_sentiment_neutral,
+    avg(sentiment_negative) filter (where source = 'benzinga') as benzinga_sentiment_negative,
+    avg(sentiment_positive - sentiment_negative) filter (where source = 'benzinga') as benzinga_sentiment_net,
+    count(*) filter (where source = 'podcast') as podcast_passage_count,
+    count(distinct newsletter_id) filter (where source = 'podcast') as podcast_episode_count,
+    avg(sentiment_positive) filter (where source = 'podcast') as podcast_sentiment_positive,
+    avg(sentiment_neutral) filter (where source = 'podcast') as podcast_sentiment_neutral,
+    avg(sentiment_negative) filter (where source = 'podcast') as podcast_sentiment_negative,
+    avg(sentiment_positive - sentiment_negative) filter (where source = 'podcast') as podcast_sentiment_net
+  from dated_mentions
+  group by symbol, signal_date
+),
+scored_news as (
+  select
+    n.symbol,
+    next_bar.trade_date as signal_date,
+    count(*) as article_count,
+    sum(n.relevance * n.sentiment) / nullif(sum(n.relevance), 0) as sentiment,
+    avg(n.relevance) as relevance
+  from public.alphavantage_news n
+  cross join lateral (
+    select d.trade_date
+    from public.daily_prices d
+    where d.symbol = n.symbol
+      -- The two date bounds only narrow the index scan; the two close times decide.
+      and d.trade_date >= (n.published_at at time zone 'America/New_York')::date
+      and d.trade_date <= ((n.published_at + interval '5 days') at time zone 'America/New_York')::date
+      and (d.trade_date + time '16:00') at time zone 'America/New_York' > n.published_at
+      and (d.trade_date + time '16:00') at time zone 'America/New_York' <= n.published_at + interval '5 days'
+    order by d.trade_date
+    limit 1
+  ) next_bar
+  group by n.symbol, next_bar.trade_date
+)
+select
+  p.symbol,
+  p.trade_date as signal_date,
+  coalesce(s.passage_count, 0) as passage_count,
+  coalesce(s.newsletter_count, 0) as newsletter_count,
+  s.sentiment_positive,
+  s.sentiment_neutral,
+  s.sentiment_negative,
+  s.sentiment_net,
+  coalesce(s.news_item_count, 0) as news_item_count,
+  s.news_sentiment_positive,
+  s.news_sentiment_neutral,
+  s.news_sentiment_negative,
+  s.news_sentiment_net,
+  coalesce(s.benzinga_headline_count, 0) as benzinga_headline_count,
+  s.benzinga_sentiment_positive,
+  s.benzinga_sentiment_neutral,
+  s.benzinga_sentiment_negative,
+  s.benzinga_sentiment_net,
+  coalesce(s.podcast_passage_count, 0) as podcast_passage_count,
+  coalesce(s.podcast_episode_count, 0) as podcast_episode_count,
+  s.podcast_sentiment_positive,
+  s.podcast_sentiment_neutral,
+  s.podcast_sentiment_negative,
+  s.podcast_sentiment_net,
+  coalesce(av.article_count, 0) as alphavantage_article_count,
+  av.sentiment as alphavantage_sentiment,
+  av.relevance as alphavantage_relevance,
+  market.value as market_news_sentiment,
+  o.iv_30d,
+  o.iv_percentile_1y,
+  o.hv_20d,
+  o.skew_slope,
+  o.contango,
+  o.call_volume,
+  o.put_volume,
+  o.call_open_interest,
+  o.put_open_interest,
+  p.close,
+  next_1.adjusted_close / nullif(p.adjusted_close, 0) - 1 as forward_return_1d,
+  next_5.adjusted_close / nullif(p.adjusted_close, 0) - 1 as forward_return_5d,
+  coalesce(a.as_of >= coalesce(next_5.trade_date, next_1.trade_date), false) as returns_adjusted
+from prices p
+left join sentiment s on s.symbol = p.symbol and s.signal_date = p.trade_date
+left join scored_news av on av.symbol = p.symbol and av.signal_date = p.trade_date
+left join public.market_news_sentiment market on market.observation_date = p.trade_date - 21
+left join public.options_daily o on o.symbol = p.symbol and o.trade_date = p.trade_date
+left join public.price_adjustments a on a.symbol = p.symbol
+left join prices next_1 on next_1.symbol = p.symbol and next_1.session_number = p.session_number + 1
+left join prices next_5 on next_5.symbol = p.symbol and next_5.session_number = p.session_number + 5;
