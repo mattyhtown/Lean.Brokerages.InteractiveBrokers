@@ -54,7 +54,7 @@ Order sending is off unless you turn it on.
 | `IB_ACCOUNT` | Account to trade when the login has more than one. A call can override it with `account`. |
 | `IB_PORT` | IB's defaults are `7497` (TWS paper), `7496` (TWS live), `4002` (Gateway paper), `4001` (Gateway live). Start on a paper port. |
 
-Gateway's own **Read-Only API** setting must be off for previews and orders. `place_order` supports limit and market orders, `DAY` or `GTC`. `cancel_order` only reaches orders this bridge placed under the same `IB_CLIENT_ID`; `get_open_orders` lists every open order on the account. If a `place_order` call times out or errors, check `get_open_orders` before trying again, so an order that did reach IB is not sent twice.
+Gateway's own **Read-Only API** setting must be off for previews and orders. `place_order` supports limit and market orders, `DAY` or `GTC`. `cancel_order` only reaches orders this bridge placed under the same `IB_CLIENT_ID`; `get_open_orders` lists every open order on the account. `cancel_order` asks IB for the open orders first, and if they do not arrive within 10 seconds it reports that instead of saying the order does not exist. If a `place_order` call times out or errors, check `get_open_orders` before trying again, so an order that did reach IB is not sent twice.
 
 ## When to use IB vs MCP
 

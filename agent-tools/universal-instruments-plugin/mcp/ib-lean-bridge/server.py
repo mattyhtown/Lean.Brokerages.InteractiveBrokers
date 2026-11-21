@@ -31,6 +31,7 @@ IB_ACCOUNT = os.environ.get("IB_ACCOUNT") or ""
 ORDERS_ENABLED = os.environ.get("IB_ALLOW_ORDERS") == "1"
 
 ORDER_SETTLE_SECONDS = 5.0
+OPEN_ORDERS_TIMEOUT_SECONDS = 10.0
 PENDING_STATUSES = {"PendingSubmit", "ApiPending", "PendingCancel"}
 IB_UNSET_DOUBLE = 1.7976931348623157e308
 
@@ -374,6 +375,17 @@ async def cancel_order(order_id: int, confirm: bool = False) -> str:
     """
     _require_orders_enabled(confirm)
     async with _session(readonly=False) as (ib, messages):
+        # ib_insync asks for this client's open orders while connecting, but only logs a
+        # timeout there. Ask again and fail loudly, so a slow reply is not reported as
+        # "no such order" while the order is still working.
+        try:
+            await asyncio.wait_for(ib.reqOpenOrdersAsync(), OPEN_ORDERS_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError as e:
+            raise RuntimeError(
+                f"IB did not return the open orders within {OPEN_ORDERS_TIMEOUT_SECONDS:g} "
+                f"seconds, so order {order_id} was not cancelled and may still be working. "
+                "Call get_open_orders to check, then try again."
+            ) from e
         trade = next((t for t in ib.openTrades() if t.order.orderId == order_id), None)
         if trade is None:
             raise ValueError(

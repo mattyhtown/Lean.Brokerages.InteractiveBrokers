@@ -5,6 +5,7 @@ Run: python -m unittest discover -s agent-tools/universal-instruments-plugin/mcp
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from types import SimpleNamespace
@@ -36,6 +37,7 @@ class FakeIB:
     details: list[Contract] = []
     what_if_result: object = None
     existing_trades: list[Trade] = []
+    open_orders_reply: bool = True
 
     def __init__(self) -> None:
         self.errorEvent = FakeEvent()
@@ -45,6 +47,7 @@ class FakeIB:
         self.cancelled: list[object] = []
         self.what_if: list[tuple[Contract, object]] = []
         self.history_kwargs: dict = {}
+        self.open_orders_synced = False
         FakeIB.instances.append(self)
 
     async def connectAsync(self, host, port, clientId, readonly=False):
@@ -83,6 +86,13 @@ class FakeIB:
         return Trade(contract, order, OrderStatus(orderId=7, status="Submitted", remaining=order.totalQuantity))
 
     def openTrades(self):
+        """Only knows the orders IB has replayed to this connection."""
+        return FakeIB.existing_trades if self.open_orders_synced else []
+
+    async def reqOpenOrdersAsync(self):
+        if not FakeIB.open_orders_reply:
+            await asyncio.Event().wait()
+        self.open_orders_synced = True
         return FakeIB.existing_trades
 
     async def reqAllOpenOrdersAsync(self):
@@ -103,6 +113,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         FakeIB.details = [eurusd()]
         FakeIB.what_if_result = OrderState(initMarginChange="333.0", commission=2.0, commissionCurrency="USD")
         FakeIB.existing_trades = []
+        FakeIB.open_orders_reply = True
         patches = [
             mock.patch.object(server, "IB", FakeIB),
             mock.patch.object(server, "ORDERS_ENABLED", False),
@@ -216,6 +227,18 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["cancelRequested"])
         self.assertEqual(self.ib.cancelled, [order])
         self.assertIsNone(result["order"]["limitPrice"])
+
+    async def test_cancel_order_reports_when_open_orders_do_not_arrive(self) -> None:
+        order = server._build_order("BUY", 1, "MKT", None, "DAY", "")
+        order.orderId = 7
+        FakeIB.existing_trades = [Trade(eurusd(), order, OrderStatus(orderId=7, status="Submitted"))]
+        FakeIB.open_orders_reply = False
+        with mock.patch.object(server, "ORDERS_ENABLED", True), \
+                mock.patch.object(server, "OPEN_ORDERS_TIMEOUT_SECONDS", 0.05):
+            with self.assertRaisesRegex(RuntimeError, "may still be working"):
+                await server.cancel_order(7, confirm=True)
+        self.assertEqual(self.ib.cancelled, [])
+        self.assertFalse(self.ib.connected)
 
     async def test_open_orders_lists_trades(self) -> None:
         order = server._build_order("BUY", 3, "LMT", 99.5, "DAY", "")
