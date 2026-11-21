@@ -7,11 +7,11 @@ alwaysApply: false
 
 Use the **instrument-router** skill (`skills/instrument-router/SKILL.md`) for full routing tables.
 
-- US equities/options/index options → **Alpaca-trading** first
-- Crypto / Coinbase futures → **Coinbase**
-- Forex, bonds, CME futures, NDX/RUT options → **ib-lean-bridge** + LEAN/IB
+- US equities/options/index options → **Alpaca-trading** first (or **Alpaca-trading-paper** for paper)
+- Crypto / Coinbase futures → **Coinbase** (keyless Kraken public REST fallback if `Kraken` MCP is down)
+- Forex, bonds, CME futures, NDX/RUT options → **ib-lean-bridge** (`get_quote`, `get_historical_bars`, `get_positions`, `get_account_summary`, `preview_order`, gated `place_order`/`cancel_order`) + LEAN/IB
 - Kalshi / Polymarket → **prediction-markets** MCP (this plugin)
-- Short interest, fundamentals, earnings dates, analyst ratings, macro series, crypto market caps → direct HTTP sources listed in the skill (no MCP connected)
-- Preview before live orders (`coinbase_orders_preview`, `ib-lean-bridge` `preview_order`); IB orders need `confirm=true` after user approval; PM trading requires explicit user confirmation
+- Short interest, fundamentals, earnings dates, analyst ratings, macro series, options IV/greeks fallback (CBOE), crypto market caps, SEC EDGAR Form 4/13F (`scripts/edgar_parse.py` with `SEC_USER_AGENT`) → direct HTTP sources listed in the skill
+- Preview before live orders (`coinbase_orders_preview`, `ib-lean-bridge` `preview_order`); IB orders need `IB_ALLOW_ORDERS=1` and `confirm=true` after user approval; PM trading requires explicit user confirmation
 
 MCP health: `docs/MCP_HEALTH_CHECKLIST.md`
