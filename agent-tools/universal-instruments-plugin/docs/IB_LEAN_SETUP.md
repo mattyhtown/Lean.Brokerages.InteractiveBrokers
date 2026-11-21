@@ -33,15 +33,41 @@ Use these in a minimal algorithm or the **ib-lean-bridge** MCP to confirm each a
 
 ### Smoke test through the bridge
 
-With Gateway or TWS running, call the bridge tools in this order. Each step only reads until the last one.
+Configure your local TWS or IB Gateway first:
+
+1. Log in to your **Paper** account first (`7497` for TWS paper, `4002` for IB Gateway paper; live ports are `7496` and `4001`).
+2. Open **Global Configuration → API → Settings** (TWS) or **Configure → Settings → API → Settings** (IB Gateway).
+3. Enable **Enable ActiveX and Socket Clients**.
+4. Add `127.0.0.1` under **Trusted IPs** (or keep **Allow connections from localhost only** checked).
+5. Uncheck **Read-Only API** if you want to test `preview_order` (what-if) or gated orders; keep it checked if you only want read-only data.
+
+Then run the read-only smoke-test script (it never calls `place_order` or `cancel_order`):
+
+```bash
+# Quick port check
+./agent-tools/universal-instruments-plugin/scripts/check-ib-env.sh
+
+# Full read-only smoke test (account summary, positions, EURUSD FX, front-month ES future, US Treasury bond)
+agent-tools/universal-instruments-plugin/mcp/ib-lean-bridge/.venv/bin/python \
+  agent-tools/universal-instruments-plugin/scripts/smoke-test-ib.py --port 7497
+
+# Optional: also run a what-if preview_order (sends nothing; verifies Read-Only API is off)
+agent-tools/universal-instruments-plugin/mcp/ib-lean-bridge/.venv/bin/python \
+  agent-tools/universal-instruments-plugin/scripts/smoke-test-ib.py --port 7497 --preview
+```
+
+Replace `7497` with `4002` if you run IB Gateway paper. If you installed dependencies into your system Python instead of `.venv`, replace the Python path with `python3`. The output marks each asset class `PASS`, `ENTITLEMENT_NEEDED` (IB error codes `162`, `354`, `10089`, `10167`, `10168`), or `FAIL`.
+
+From chat (once the MCP is connected), you can also exercise the tools directly in this order:
 
 1. `ping` — shows the host, port, client id and whether order sending is on. No network call.
-2. `get_contract_details` — `symbol=EURUSD, sec_type=CASH, exchange=IDEALPRO`; then `symbol=ES, sec_type=FUT, exchange=CME`; then a Treasury with `sec_type=BOND`.
-3. `get_historical_bars` — the same forex pair; the future with `expiry=<YYYYMM>`; the bond with `con_id=<conId from step 2>`. Forex has no trade bars at IB, so the bridge asks for midpoint bars.
-4. `preview_order` — a small limit order on each. IB answers with the margin change and commission and sends nothing.
-5. `place_order` — only if you want a real order; see the next section.
+2. `get_account_summary` and `get_positions` — confirms balances and existing positions.
+3. `get_contract_details` — `symbol=EURUSD, sec_type=CASH, exchange=IDEALPRO`; then `symbol=ES, sec_type=FUT, exchange=CME`; then a Treasury with `sec_type=BOND`.
+4. `get_historical_bars` and `get_quote` — the same forex pair; the future with `expiry=<YYYYMM>`; the bond with `con_id=<conId from step 3>`. Forex has no trade bars at IB, so the bridge asks for midpoint bars. `get_quote` defaults to `market_data_type=3` (delayed fallback if live data is unsubscribed).
+5. `preview_order` — a small limit order on each. IB answers with the margin change and commission and sends nothing.
+6. `place_order` — only if you want a real order; see the next section.
 
-This has not been run against a live Gateway: the Cursor cloud agent VM has no IB login, and nothing listens on `127.0.0.1:7497` there (checked 2026-11-15). The bridge's logic is covered by `mcp/ib-lean-bridge/test_server.py`, which uses a stand-in for the IB client.
+This has not been run against a live Gateway: the Cursor cloud agent VM has no IB login, and nothing listens on `127.0.0.1:7497` there. The bridge's logic is covered by `mcp/ib-lean-bridge/test_server.py`, which uses a stand-in for the IB client.
 
 ## Sending orders through the bridge
 
