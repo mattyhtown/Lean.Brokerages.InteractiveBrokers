@@ -45,17 +45,26 @@ def _find_entitlement_messages(messages: list[str]) -> list[str]:
     return hits
 
 
-def _pick_front_expiry(contracts: list[dict[str, Any]]) -> str:
-    today_ym = datetime.date.today().strftime("%Y%m")
-    expiries = sorted(
-        {
-            str(c.get("lastTradeDateOrContractMonth") or "").strip()
-            for c in contracts
-            if c.get("lastTradeDateOrContractMonth")
-        }
-    )
-    upcoming = [exp for exp in expiries if exp[:6] >= today_ym]
-    return upcoming[0] if upcoming else (expiries[0] if expiries else "")
+def _pick_front_expiry(
+    contracts: list[dict[str, Any]],
+    today: datetime.date | None = None,
+) -> str:
+    ref = today or datetime.date.today()
+    today_ymd = ref.strftime("%Y%m%d")
+    today_ym = ref.strftime("%Y%m")
+    upcoming: set[str] = set()
+    for c in contracts:
+        raw = str(c.get("lastTradeDateOrContractMonth") or "").strip()
+        if not raw:
+            continue
+        date_token = raw.split()[0]
+        if len(date_token) == 8 and date_token.isdigit():
+            if date_token >= today_ymd:
+                upcoming.add(date_token)
+        elif len(date_token) == 6 and date_token.isdigit():
+            if date_token > today_ym:
+                upcoming.add(date_token)
+    return min(upcoming) if upcoming else ""
 
 
 async def _run_step(name: str, coro: Any) -> dict[str, Any]:
@@ -152,7 +161,7 @@ async def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
     else:
-        steps.append({"step": "fut_bars_ES", "status": "SKIP", "error": "No ES contract expiry returned"})
+        steps.append({"step": "fut_bars_ES", "status": "SKIP", "error": "No upcoming ES contract expiry returned"})
 
     # 3. Bond: US Treasury via con_id
     bond_con_id = args.bond_con_id

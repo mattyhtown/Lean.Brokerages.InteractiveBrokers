@@ -77,6 +77,21 @@ def _clean_float(value: Any) -> float | None:
     return None
 
 
+def _clean_quote_price(value: Any) -> float | None:
+    cleaned = _clean_float(value)
+    # IB uses -1 as a sentinel for missing/unavailable tick prices.
+    if cleaned is None or cleaned == -1.0:
+        return None
+    return cleaned
+
+
+def _clean_quote_size(value: Any) -> float | None:
+    cleaned = _clean_float(value)
+    if cleaned is None or cleaned < 0:
+        return None
+    return cleaned
+
+
 def _build_contract(
     symbol: str,
     sec_type: str,
@@ -349,7 +364,7 @@ async def get_positions(account: str = "") -> str:
 
 @mcp.tool()
 async def get_account_summary(account: str = "") -> str:
-    """Return key account balances (NetLiquidation, TotalCashValue, BuyingPower, margin, PnL)."""
+    """Return key account balances grouped by account, tag, and currency."""
     target_account = account or IB_ACCOUNT
     async with _session(readonly=True) as (ib, messages):
         rows = await ib.accountSummaryAsync(account=target_account)
@@ -357,10 +372,7 @@ async def get_account_summary(account: str = "") -> str:
         for row in rows:
             if row.tag not in ACCOUNT_SUMMARY_TAGS:
                 continue
-            summary.setdefault(row.account, {})[row.tag] = {
-                "value": row.value,
-                "currency": row.currency,
-            }
+            summary.setdefault(row.account, {}).setdefault(row.tag, {})[row.currency or ""] = row.value
         return json.dumps(
             {"account": target_account or None, "summary": summary, "messages": messages},
             indent=2,
@@ -381,7 +393,8 @@ async def get_quote(
     Fetch a snapshot quote from Interactive Brokers.
 
     market_data_type: 1=live, 2=frozen, 3=delayed (falls back from live when unsubscribed,
-    default), 4=delayed-frozen. Non-finite values (NaN) are returned as null.
+    default), 4=delayed-frozen. Non-finite values (NaN) and IB -1 missing-tick sentinels
+    are returned as null.
     """
     if isinstance(market_data_type, bool) or market_data_type not in MARKET_DATA_TYPES:
         raise ValueError("market_data_type must be 1 (live), 2 (frozen), 3 (delayed), or 4 (delayed-frozen)")
@@ -392,8 +405,8 @@ async def get_quote(
         ib.reqMarketDataType(market_data_type)
         tickers = await ib.reqTickersAsync(contract)
         ticker = tickers[0] if tickers else None
-        bid = _clean_float(getattr(ticker, "bid", None))
-        ask = _clean_float(getattr(ticker, "ask", None))
+        bid = _clean_quote_price(getattr(ticker, "bid", None))
+        ask = _clean_quote_price(getattr(ticker, "ask", None))
         midpoint = round((bid + ask) / 2.0, 10) if bid is not None and ask is not None else None
         return json.dumps(
             {
@@ -402,13 +415,13 @@ async def get_quote(
                 "bid": bid,
                 "ask": ask,
                 "midpoint": midpoint,
-                "last": _clean_float(getattr(ticker, "last", None)),
-                "close": _clean_float(getattr(ticker, "close", None)),
-                "high": _clean_float(getattr(ticker, "high", None)),
-                "low": _clean_float(getattr(ticker, "low", None)),
-                "volume": _clean_float(getattr(ticker, "volume", None)),
-                "bidSize": _clean_float(getattr(ticker, "bidSize", None)),
-                "askSize": _clean_float(getattr(ticker, "askSize", None)),
+                "last": _clean_quote_price(getattr(ticker, "last", None)),
+                "close": _clean_quote_price(getattr(ticker, "close", None)),
+                "high": _clean_quote_price(getattr(ticker, "high", None)),
+                "low": _clean_quote_price(getattr(ticker, "low", None)),
+                "volume": _clean_quote_size(getattr(ticker, "volume", None)),
+                "bidSize": _clean_quote_size(getattr(ticker, "bidSize", None)),
+                "askSize": _clean_quote_size(getattr(ticker, "askSize", None)),
                 "messages": messages,
             },
             indent=2,

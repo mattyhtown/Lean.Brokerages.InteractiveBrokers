@@ -375,17 +375,27 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(filtered["positions"][0]["avgCost"], 1.08)
         self.assertTrue(self.ib.connect_kwargs["readonly"])
 
-    async def test_get_account_summary_filters_key_tags(self) -> None:
+    async def test_get_account_summary_preserves_multiple_currencies(self) -> None:
         FakeIB.account_summary = [
             SimpleNamespace(account="DU1", tag="NetLiquidation", value="100500.25", currency="USD"),
+            SimpleNamespace(account="DU1", tag="NetLiquidation", value="92500.00", currency="BASE"),
+            SimpleNamespace(account="DU1", tag="TotalCashValue", value="50000.00", currency="USD"),
+            SimpleNamespace(account="DU1", tag="TotalCashValue", value="20000.00", currency="EUR"),
             SimpleNamespace(account="DU1", tag="BuyingPower", value="402001.00", currency="USD"),
             SimpleNamespace(account="DU1", tag="IgnoredCustomTag", value="999", currency="USD"),
         ]
         with mock.patch.object(server, "IB_ACCOUNT", "DU1"):
             result = json.loads(await server.get_account_summary())
         self.assertEqual(self.ib.summary_account, "DU1")
-        self.assertEqual(result["summary"]["DU1"]["NetLiquidation"]["value"], "100500.25")
-        self.assertIn("BuyingPower", result["summary"]["DU1"])
+        self.assertEqual(
+            result["summary"]["DU1"]["NetLiquidation"],
+            {"USD": "100500.25", "BASE": "92500.00"},
+        )
+        self.assertEqual(
+            result["summary"]["DU1"]["TotalCashValue"],
+            {"USD": "50000.00", "EUR": "20000.00"},
+        )
+        self.assertEqual(result["summary"]["DU1"]["BuyingPower"], {"USD": "402001.00"})
         self.assertNotIn("IgnoredCustomTag", result["summary"]["DU1"])
         self.assertTrue(self.ib.connect_kwargs["readonly"])
 
@@ -413,6 +423,24 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result["volume"])
         self.assertEqual(result["close"], 1.0835)
         self.assertTrue(self.ib.connect_kwargs["readonly"])
+
+    async def test_get_quote_strips_ib_minus_one_sentinels(self) -> None:
+        FakeIB.tickers = [
+            SimpleNamespace(
+                bid=-1.0,
+                ask=-1.0,
+                last=-1,
+                close=-1.0,
+                high=-1.0,
+                low=-1.0,
+                volume=-1,
+                bidSize=-1,
+                askSize=-1.0,
+            )
+        ]
+        result = json.loads(await server.get_quote("EURUSD", sec_type="CASH", exchange="IDEALPRO"))
+        for field in ("bid", "ask", "midpoint", "last", "close", "high", "low", "volume", "bidSize", "askSize"):
+            self.assertIsNone(result[field], msg=f"{field} should be None for IB -1 sentinel")
 
     async def test_get_quote_rejects_invalid_market_data_type(self) -> None:
         for bad in (0, 5, True):

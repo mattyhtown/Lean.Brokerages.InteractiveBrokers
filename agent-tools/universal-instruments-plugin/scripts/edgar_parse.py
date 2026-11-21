@@ -280,26 +280,61 @@ def fetch_recent_form4(cik: str, limit: int, user_agent: str) -> dict[str, Any]:
     }
 
 
-def fetch_latest_13f(cik: str, top: int, user_agent: str) -> dict[str, Any]:
-    cik10 = pad_cik(cik)
-    cik_int = str(int(cik10))
-    subs = json.loads(_sec_get(SEC_SUBMISSIONS_URL.format(cik=cik10), user_agent).decode("utf-8"))
-    recent = subs.get("filings", {}).get("recent", {})
+def select_13f_candidates(recent: dict[str, Any]) -> list[dict[str, str]]:
+    """Return recent 13F-HR / 13F-HR/A filings ordered by newest reportDate, then filingDate."""
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
     filing_dates = recent.get("filingDate", [])
     report_dates = recent.get("reportDate", [])
     primary_docs = recent.get("primaryDocument", [])
 
-    for form, acc, fdate, rdate, pdoc in zip(forms, accessions, filing_dates, report_dates, primary_docs):
+    scored: list[tuple[tuple[str, str, int], dict[str, str]]] = []
+    for idx, form in enumerate(forms):
         if form not in ("13F-HR", "13F-HR/A"):
             continue
+        acc = accessions[idx] if idx < len(accessions) else ""
+        if not acc:
+            continue
+        fdate = str((filing_dates[idx] if idx < len(filing_dates) else "") or "")
+        rdate = str((report_dates[idx] if idx < len(report_dates) else "") or "")
+        pdoc = str((primary_docs[idx] if idx < len(primary_docs) else "") or "")
+        # Prefer newest report period so a late amendment for an older quarter does not
+        # overshadow the current quarter's 13F-HR; tie-break by newest filingDate then EDGAR order.
+        scored.append(
+            (
+                (rdate, fdate, -idx),
+                {
+                    "form": form,
+                    "accessionNumber": acc,
+                    "filingDate": fdate,
+                    "reportDate": rdate,
+                    "primaryDocument": pdoc,
+                },
+            )
+        )
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [entry for _, entry in scored]
+
+
+def fetch_latest_13f(cik: str, top: int, user_agent: str) -> dict[str, Any]:
+    cik10 = pad_cik(cik)
+    cik_int = str(int(cik10))
+    subs = json.loads(_sec_get(SEC_SUBMISSIONS_URL.format(cik=cik10), user_agent).decode("utf-8"))
+    recent = subs.get("filings", {}).get("recent", {})
+    candidates = select_13f_candidates(recent)
+    if not candidates:
+        raise LookupError(f"No recent 13F-HR filing found for manager CIK {cik10}")
+
+    last_index_url = ""
+    for entry in candidates:
+        acc = entry["accessionNumber"]
         acc_nodash = acc.replace("-", "")
         index_url = f"{SEC_ARCHIVES_BASE}/{cik_int}/{acc_nodash}/index.json"
+        last_index_url = index_url
         index_json = json.loads(_sec_get(index_url, user_agent).decode("utf-8"))
-        info_file = find_13f_infotable_filename(index_json, pdoc)
+        info_file = find_13f_infotable_filename(index_json, entry["primaryDocument"])
         if not info_file:
-            raise LookupError(f"Could not locate 13F information table XML in {index_url}")
+            continue
         table_url = f"{SEC_ARCHIVES_BASE}/{cik_int}/{acc_nodash}/{info_file}"
         xml_text = _sec_get(table_url, user_agent).decode("utf-8", errors="replace")
         holdings = parse_13f_infotable_xml(xml_text)
@@ -307,9 +342,9 @@ def fetch_latest_13f(cik: str, top: int, user_agent: str) -> dict[str, Any]:
         return {
             "cik": cik10,
             "managerName": subs.get("name"),
-            "form": form,
-            "filingDate": fdate,
-            "reportDate": rdate,
+            "form": entry["form"],
+            "filingDate": entry["filingDate"],
+            "reportDate": entry["reportDate"],
             "accessionNumber": acc,
             "sourceUrl": table_url,
             "valueNote": "Raw XML <value> field (SEC switched 13F reporting from $thousands to exact $USD starting Jan 2023).",
@@ -317,7 +352,7 @@ def fetch_latest_13f(cik: str, top: int, user_agent: str) -> dict[str, Any]:
             "holdings": holdings[:top] if top > 0 else holdings,
         }
 
-    raise LookupError(f"No recent 13F-HR filing found for manager CIK {cik10}")
+    raise LookupError(f"Could not locate 13F information table XML in {last_index_url}")
 
 
 def main(argv: list[str] | None = None) -> int:

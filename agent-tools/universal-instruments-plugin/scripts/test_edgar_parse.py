@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import unittest
 from unittest import mock
@@ -187,6 +188,69 @@ class EdgarParseTest(unittest.TestCase):
             edgar_parse.find_13f_infotable_filename(index_json, "xslForm13F_X02/primary_doc.xml"),
             "form13fInfoTable.xml",
         )
+
+    def test_select_13f_prefers_newest_report_date_over_late_old_amendment(self) -> None:
+        recent = {
+            "form": ["13F-HR/A", "13F-HR", "13F-HR/A"],
+            "accessionNumber": [
+                "0001067983-26-000015",
+                "0001067983-26-000012",
+                "0001067983-26-000014",
+            ],
+            "filingDate": ["2026-11-18", "2026-11-14", "2026-11-16"],
+            "reportDate": ["2025-12-31", "2026-09-30", "2026-09-30"],
+            "primaryDocument": ["primary_doc.xml", "primary_doc.xml", "primary_doc.xml"],
+        }
+        candidates = edgar_parse.select_13f_candidates(recent)
+        self.assertEqual(
+            [c["accessionNumber"] for c in candidates],
+            [
+                "0001067983-26-000014",  # newest reportDate (2026-09-30) + newest filingDate (2026-11-16)
+                "0001067983-26-000012",  # newest reportDate (2026-09-30) original filing
+                "0001067983-26-000015",  # late amendment for older quarter (2025-12-31)
+            ],
+        )
+
+    def test_fetch_latest_13f_skips_older_amendment_and_empty_amendment(self) -> None:
+        subs_payload = {
+            "name": "Example Capital LP",
+            "filings": {
+                "recent": {
+                    "form": ["13F-HR/A", "13F-HR/A", "13F-HR"],
+                    "accessionNumber": [
+                        "0001067983-26-000099",  # late amendment for older Q4 2025
+                        "0001067983-26-000050",  # cover-only amendment for Q3 2026 (no info table)
+                        "0001067983-26-000040",  # full Q3 2026 13F-HR
+                    ],
+                    "filingDate": ["2026-11-20", "2026-11-16", "2026-11-14"],
+                    "reportDate": ["2025-12-31", "2026-09-30", "2026-09-30"],
+                    "primaryDocument": ["primary_doc.xml", "primary_doc.xml", "primary_doc.xml"],
+                }
+            },
+        }
+        responses = {
+            "https://data.sec.gov/submissions/CIK0001067983.json": json.dumps(subs_payload).encode(),
+            "https://www.sec.gov/Archives/edgar/data/1067983/000106798326000050/index.json": json.dumps(
+                {"directory": {"item": [{"name": "primary_doc.xml"}]}}
+            ).encode(),
+            "https://www.sec.gov/Archives/edgar/data/1067983/000106798326000040/index.json": json.dumps(
+                {"directory": {"item": [{"name": "primary_doc.xml"}, {"name": "form13fInfoTable.xml"}]}}
+            ).encode(),
+            "https://www.sec.gov/Archives/edgar/data/1067983/000106798326000040/form13fInfoTable.xml": SAMPLE_13F_DEFAULT_NS.encode(),
+        }
+
+        def fake_get(url: str, user_agent: str, timeout: float = 20.0) -> bytes:
+            if url not in responses:
+                raise AssertionError(f"Unexpected URL fetched: {url}")
+            return responses[url]
+
+        with mock.patch.object(edgar_parse, "_sec_get", side_effect=fake_get):
+            result = edgar_parse.fetch_latest_13f("1067983", top=10, user_agent="Jane Doe jane@example.com")
+
+        self.assertEqual(result["accessionNumber"], "0001067983-26-000040")
+        self.assertEqual(result["reportDate"], "2026-09-30")
+        self.assertEqual(result["form"], "13F-HR")
+        self.assertEqual(result["totalPositions"], 1)
 
 
 if __name__ == "__main__":
