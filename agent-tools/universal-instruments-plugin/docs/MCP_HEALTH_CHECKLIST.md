@@ -16,7 +16,7 @@ Use this after connecting or reconnecting brokers in **Cursor → Settings → T
 | **Daloopa** | Authenticated | Needed for fundamentals and earnings detail; shows `needsAuth` until connected |
 | **You-finance** | Authenticated | Shows `needsAuth` until connected |
 | **prediction-markets** (this plugin) | `list_kalshi_markets`, `list_polymarket_markets` | No secrets for read-only Gamma/Kalshi public APIs |
-| **ib-lean-bridge** (this plugin) | `ping`, `get_historical_bars`, `preview_order` | Requires TWS/IB Gateway + env vars |
+| **ib-lean-bridge** (this plugin) | `ping`, `get_account_summary`, `get_positions`, `get_quote`, `get_historical_bars`, `preview_order` | Requires local TWS/IB Gateway + env vars; run `scripts/smoke-test-ib.py` |
 
 ## Coverage checklist
 
@@ -34,8 +34,8 @@ Asset class, the tool that serves it, what the account needs, and what a live ca
 | International perpetuals | `Coinbase` with `product_type=GLOBAL_PERP` | Separate eligibility and approval to trade | Listing visible. Trading eligibility not checked. |
 | Forex, CME futures, bonds, NDX and RUT options | `ib-lean-bridge` (this plugin); LEAN live for everything except bonds | IB account with trading permission and a market data subscription for each asset class; Gateway or TWS running with the API enabled | Not connected: no IB login on the cloud agent, nothing listening on `127.0.0.1:7497`. |
 | Prediction markets | `prediction-markets` (this plugin) | Nothing for reading | All nine tools answered against Kalshi and Polymarket. |
-| Options analytics | `orats` | ORATS subscription | Tool discovery failed; reconnect in Cursor settings. |
-| Kraken | `Kraken` | Kraken API connection | Tool discovery failed; reconnect in Cursor settings. |
+| Options analytics | `orats` | ORATS subscription | Tool discovery failed (still loading on 2026-11-21); reconnect in Cursor settings. Keyless fallback for IV30, greeks, put/call ratios and straddle implied move: CBOE delayed chains (`https://cdn.cboe.com/api/global/delayed_quotes/options/<SYMBOL>.json` + quote `iv30`). |
+| Kraken | `Kraken` | Kraken API connection (optional for reads) | Tool discovery failed (still loading on 2026-11-21); reconnect in Cursor settings. Keyless read-only fallback verified 2026-11-21: Kraken public REST (`https://api.kraken.com/0/public/Ticker`, `/Depth`, `/OHLC`, `/Trades`, `/AssetPairs`). |
 | Paper trading | `Alpaca-trading-paper` (same tools as `Alpaca-trading`, against the paper account) | Sign-in | Connected. `get_account_info` returned status `ACTIVE`, options level 3, shorting enabled and crypto active. Data entitlements match the live connection: `feed=opra` returned 403 "OPRA agreement is not signed" and the SPX chain returned on `feed=indicative`. No order was placed. |
 | Broker API | `Alpaca-broker`, `Alpaca-broker-sandbox` | Sign-in for each; these are Alpaca's Broker API for firms that open accounts for their own customers, not needed to trade your own account | Not used. The account owner trades through the Trading API and declined the Broker sign-in on 2026-11-21; leave both disconnected. |
 
@@ -61,9 +61,25 @@ Use `coinbase_products_list` with filters before trading. Preview equities/futur
 ## Fixing broken MCP connections
 
 1. Open **Cursor → Settings → Tools & MCP**.
-2. For each server showing **error** or **needsAuth**, use **Connect** / **Reconnect**.
-3. ORATS / Kraken: if discovery still fails, disable and re-enable the server or update the plugin package.
-4. Restart Cursor if tools remain stale after auth.
+2. For each server showing **error**, **loading**, or **needsAuth**, click **Connect** / **Reconnect**.
+3. **ORATS / Kraken:** if discovery still fails or stays stuck in `loading`, toggle the server off and back on, confirm its API token / URL in your user MCP config (`~/.cursor/mcp.json`), or update the plugin package. Until reconnected, use CBOE delayed option chains in place of `orats` and Kraken public REST (`/0/public/Ticker`, `/Depth`, `/OHLC`, `/Trades`) in place of `Kraken` for read-only data.
+4. Fully quit and reopen Cursor if tools remain stale after auth.
+
+## User-managed keys, entitlements, and auth runbook
+
+These items are account- or environment-level and cannot be enabled automatically by the repo. Check off only the ones you want to unlock:
+
+| Item | What it unlocks | How to enable |
+|------|-----------------|---------------|
+| `SEC_USER_AGENT` (`Name email@domain`) | SEC EDGAR filing indexes, `companyfacts`, full-text search, and `scripts/edgar_parse.py` (Form 4 + 13F XML) | Export in your shell profile and Cursor Cloud Agents Secrets: `export SEC_USER_AGENT="Your Name you@domain.com"` |
+| `FRED_API_KEY` (free) | FRED JSON API (`api.stlouisfed.org`: series search, release dates, revisions); public CSV already works without a key | Request a free key at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) and store in env / Secrets |
+| `ALPHAVANTAGE_API_KEY` (free tier: 25 req/day) | Per-symbol Alpha Vantage earnings history, estimate revisions, statements, transcripts, and non-demo macro/FX calls | Request a free key at [alphavantage.co](https://www.alphavantage.co/support/#api-key) and store in env / Secrets |
+| `EIA_API_KEY` (free) | Structured JSON oil/gas inventory and production series from `api.eia.gov` (avoids `.xls` parsing) | Register at [eia.gov/opendata](https://www.eia.gov/opendata/register.php) and store in env / Secrets |
+| Alpaca OPRA agreement | Live `feed=opra` option quotes on `Alpaca-trading` and `Alpaca-trading-paper` (currently 403; `feed=indicative` works now) | Sign the OPRA market data agreement in the Alpaca dashboard |
+| Alpaca index & fixed-income entitlements | `get_index_latest_values` (SPX/VIX spot), `get_fixed_income_latest_quotes`, and index options trading | Enable index options trading and market data subscriptions in the Alpaca dashboard (or contact Alpaca support) |
+| Coinbase `FUTURE` / `GLOBAL_PERP` approvals | Trading US CFM crypto futures and international perpetuals (product listings are already readable) | Complete Coinbase Financial Markets futures / international eligibility approval in Coinbase |
+| `Sp-global`, `Daloopa`, `You-finance` MCPs | Authenticated fundamentals, financial models, and institutional earnings detail | Click **Connect** for each in **Cursor → Settings → Tools & MCP** (optional; stockanalysis.com / TipRanks / Zacks HTTP routes work without them) |
+| Aikido security scan (`aikido_login`) | Cloud SAST + secrets scans through the Aikido MCP | Run the Aikido sign-in flow in Cursor if you want Aikido cloud scans; otherwise run local static/secret checks before committing |
 
 ## Data sources without a connected MCP
 
