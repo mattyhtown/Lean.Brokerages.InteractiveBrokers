@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Minimal IB Gateway MCP bridge. Requires TWS or IB Gateway with API enabled.
 
-Reads (history, contract details, open orders, order preview) work as soon as
-Gateway is reachable. Sending or cancelling an order additionally requires
-IB_ALLOW_ORDERS=1 in the server environment and confirm=true on the call.
+Reads (history, contract details, quotes, positions, account summary, open orders,
+order preview) work as soon as Gateway is reachable. Sending or cancelling an order
+additionally requires IB_ALLOW_ORDERS=1 in the server environment and confirm=true on
+the call.
 """
 
 from __future__ import annotations
@@ -36,6 +37,16 @@ ORDER_SETTLE_SECONDS = 5.0
 OPEN_ORDERS_TIMEOUT_SECONDS = 10.0
 PENDING_STATUSES = {"PendingSubmit", "ApiPending", "PendingCancel"}
 REJECTED_STATUSES = {"Inactive", "Cancelled", "ApiCancelled"}
+ACCOUNT_SUMMARY_TAGS = {
+    "NetLiquidation",
+    "TotalCashValue",
+    "BuyingPower",
+    "AvailableFunds",
+    "MaintMarginReq",
+    "UnrealizedPnL",
+    "RealizedPnL",
+}
+MARKET_DATA_TYPES = {1, 2, 3, 4}
 IB_UNSET_DOUBLE = 1.7976931348623157e308
 
 # One IB_CLIENT_ID cannot hold two concurrent TWS/Gateway sessions; serialize per event loop.
@@ -311,6 +322,96 @@ async def get_open_orders() -> str:
         trades = await ib.reqAllOpenOrdersAsync()
         return json.dumps(
             {"orders": [_trade_summary(t) for t in trades], "messages": messages}, indent=2
+        )
+
+
+@mcp.tool()
+async def get_positions(account: str = "") -> str:
+    """List open positions on the IB account (optional account filter; defaults to IB_ACCOUNT or all)."""
+    target_account = account or IB_ACCOUNT
+    async with _session(readonly=True) as (ib, messages):
+        positions = await ib.reqPositionsAsync()
+        rows = [
+            {
+                "account": p.account,
+                "position": _clean_float(p.position),
+                "avgCost": _clean_float(p.avgCost),
+                "contract": _contract_summary(p.contract),
+            }
+            for p in positions
+            if not target_account or p.account == target_account
+        ]
+        return json.dumps(
+            {"account": target_account or None, "positions": rows, "messages": messages},
+            indent=2,
+        )
+
+
+@mcp.tool()
+async def get_account_summary(account: str = "") -> str:
+    """Return key account balances (NetLiquidation, TotalCashValue, BuyingPower, margin, PnL)."""
+    target_account = account or IB_ACCOUNT
+    async with _session(readonly=True) as (ib, messages):
+        rows = await ib.accountSummaryAsync(account=target_account)
+        summary: dict[str, dict[str, dict[str, str]]] = {}
+        for row in rows:
+            if row.tag not in ACCOUNT_SUMMARY_TAGS:
+                continue
+            summary.setdefault(row.account, {})[row.tag] = {
+                "value": row.value,
+                "currency": row.currency,
+            }
+        return json.dumps(
+            {"account": target_account or None, "summary": summary, "messages": messages},
+            indent=2,
+        )
+
+
+@mcp.tool()
+async def get_quote(
+    symbol: str,
+    sec_type: str = "STK",
+    exchange: str = "SMART",
+    currency: str = "USD",
+    expiry: str = "",
+    con_id: int = 0,
+    market_data_type: int = 3,
+) -> str:
+    """
+    Fetch a snapshot quote from Interactive Brokers.
+
+    market_data_type: 1=live, 2=frozen, 3=delayed (falls back from live when unsubscribed,
+    default), 4=delayed-frozen. Non-finite values (NaN) are returned as null.
+    """
+    if isinstance(market_data_type, bool) or market_data_type not in MARKET_DATA_TYPES:
+        raise ValueError("market_data_type must be 1 (live), 2 (frozen), 3 (delayed), or 4 (delayed-frozen)")
+    async with _session(readonly=True) as (ib, messages):
+        contract = await _qualify(
+            ib, _build_contract(symbol, sec_type, exchange, currency, expiry, con_id)
+        )
+        ib.reqMarketDataType(market_data_type)
+        tickers = await ib.reqTickersAsync(contract)
+        ticker = tickers[0] if tickers else None
+        bid = _clean_float(getattr(ticker, "bid", None))
+        ask = _clean_float(getattr(ticker, "ask", None))
+        midpoint = round((bid + ask) / 2.0, 10) if bid is not None and ask is not None else None
+        return json.dumps(
+            {
+                "contract": _contract_summary(contract),
+                "marketDataType": market_data_type,
+                "bid": bid,
+                "ask": ask,
+                "midpoint": midpoint,
+                "last": _clean_float(getattr(ticker, "last", None)),
+                "close": _clean_float(getattr(ticker, "close", None)),
+                "high": _clean_float(getattr(ticker, "high", None)),
+                "low": _clean_float(getattr(ticker, "low", None)),
+                "volume": _clean_float(getattr(ticker, "volume", None)),
+                "bidSize": _clean_float(getattr(ticker, "bidSize", None)),
+                "askSize": _clean_float(getattr(ticker, "askSize", None)),
+                "messages": messages,
+            },
+            indent=2,
         )
 
 

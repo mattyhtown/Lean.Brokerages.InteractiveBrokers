@@ -9,6 +9,7 @@ import asyncio
 import json
 import unittest
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from ib_insync import Contract, OrderState, OrderStatus, Trade
@@ -43,6 +44,9 @@ class FakeIB:
     read_error: tuple[int, str] | None = None
     existing_trades: list[Trade] = []
     open_orders_reply: bool = True
+    positions: list[Any] = []
+    account_summary: list[Any] = []
+    tickers: list[Any] = []
 
     def __init__(self) -> None:
         self.errorEvent = FakeEvent()
@@ -53,6 +57,8 @@ class FakeIB:
         self.what_if: list[tuple[Contract, object]] = []
         self.history_kwargs: dict = {}
         self.open_orders_synced = False
+        self.market_data_type: int | None = None
+        self.summary_account: str | None = None
         FakeIB.instances.append(self)
 
     async def connectAsync(self, host, port, clientId, readonly=False):
@@ -128,6 +134,26 @@ class FakeIB:
     def cancelOrder(self, order):
         self.cancelled.append(order)
 
+    async def reqPositionsAsync(self):
+        if FakeIB.read_error:
+            self.errorEvent.emit(0, FakeIB.read_error[0], FakeIB.read_error[1], None)
+        return FakeIB.positions
+
+    async def accountSummaryAsync(self, account: str = ""):
+        self.summary_account = account
+        if FakeIB.read_error:
+            self.errorEvent.emit(0, FakeIB.read_error[0], FakeIB.read_error[1], None)
+        return FakeIB.account_summary
+
+    def reqMarketDataType(self, marketDataType: int) -> None:
+        self.market_data_type = marketDataType
+
+    async def reqTickersAsync(self, *contracts):
+        if FakeIB.read_error:
+            self.errorEvent.emit(1, FakeIB.read_error[0], FakeIB.read_error[1], contracts[0])
+            return []
+        return FakeIB.tickers
+
 
 def eurusd() -> Contract:
     return Contract(secType="CASH", conId=12087792, symbol="EUR", currency="USD", exchange="IDEALPRO", localSymbol="EUR.USD")
@@ -146,6 +172,9 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         FakeIB.read_error = None
         FakeIB.existing_trades = []
         FakeIB.open_orders_reply = True
+        FakeIB.positions = []
+        FakeIB.account_summary = []
+        FakeIB.tickers = []
         patches = [
             mock.patch.object(server, "IB", FakeIB),
             mock.patch.object(server, "ORDERS_ENABLED", False),
@@ -332,6 +361,64 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         result = json.loads(await server.get_open_orders())
         self.assertEqual(result["orders"][0]["status"], "PreSubmitted")
         self.assertEqual(result["orders"][0]["limitPrice"], 99.5)
+
+    async def test_get_positions_filters_by_account(self) -> None:
+        FakeIB.positions = [
+            SimpleNamespace(account="DU1", contract=eurusd(), position=25000.0, avgCost=1.08),
+            SimpleNamespace(account="DU2", contract=eurusd(), position=-10000.0, avgCost=1.09),
+        ]
+        all_pos = json.loads(await server.get_positions())
+        self.assertEqual(len(all_pos["positions"]), 2)
+        filtered = json.loads(await server.get_positions(account="DU1"))
+        self.assertEqual(len(filtered["positions"]), 1)
+        self.assertEqual(filtered["positions"][0]["position"], 25000.0)
+        self.assertEqual(filtered["positions"][0]["avgCost"], 1.08)
+        self.assertTrue(self.ib.connect_kwargs["readonly"])
+
+    async def test_get_account_summary_filters_key_tags(self) -> None:
+        FakeIB.account_summary = [
+            SimpleNamespace(account="DU1", tag="NetLiquidation", value="100500.25", currency="USD"),
+            SimpleNamespace(account="DU1", tag="BuyingPower", value="402001.00", currency="USD"),
+            SimpleNamespace(account="DU1", tag="IgnoredCustomTag", value="999", currency="USD"),
+        ]
+        with mock.patch.object(server, "IB_ACCOUNT", "DU1"):
+            result = json.loads(await server.get_account_summary())
+        self.assertEqual(self.ib.summary_account, "DU1")
+        self.assertEqual(result["summary"]["DU1"]["NetLiquidation"]["value"], "100500.25")
+        self.assertIn("BuyingPower", result["summary"]["DU1"])
+        self.assertNotIn("IgnoredCustomTag", result["summary"]["DU1"])
+        self.assertTrue(self.ib.connect_kwargs["readonly"])
+
+    async def test_get_quote_strips_nan_and_computes_midpoint(self) -> None:
+        FakeIB.tickers = [
+            SimpleNamespace(
+                bid=1.0840,
+                ask=1.0842,
+                last=float("nan"),
+                close=1.0835,
+                high=float("nan"),
+                low=1.0810,
+                volume=float("nan"),
+                bidSize=1000000.0,
+                askSize=500000.0,
+            )
+        ]
+        result = json.loads(await server.get_quote("EURUSD", sec_type="CASH", exchange="IDEALPRO"))
+        self.assertEqual(self.ib.market_data_type, 3)
+        self.assertEqual(result["bid"], 1.0840)
+        self.assertEqual(result["ask"], 1.0842)
+        self.assertEqual(result["midpoint"], 1.0841)
+        self.assertIsNone(result["last"])
+        self.assertIsNone(result["high"])
+        self.assertIsNone(result["volume"])
+        self.assertEqual(result["close"], 1.0835)
+        self.assertTrue(self.ib.connect_kwargs["readonly"])
+
+    async def test_get_quote_rejects_invalid_market_data_type(self) -> None:
+        for bad in (0, 5, True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                await server.get_quote("EURUSD", sec_type="CASH", exchange="IDEALPRO", market_data_type=bad)
+        self.assertEqual(FakeIB.instances, [])
 
 
 if __name__ == "__main__":
