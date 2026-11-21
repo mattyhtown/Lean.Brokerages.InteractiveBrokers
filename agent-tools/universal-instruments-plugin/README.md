@@ -2,6 +2,7 @@
 
 Agent tooling for **multi-asset** coverage alongside [Interactive Brokers + LEAN](../../../README.md):
 
+- **Market data** (`market-data` MCP — live keyless Kraken spot/book/OHLC/trades, CBOE delayed options/IV30/straddles/put-call/history, FRED macro/rates/oil, TreasuryDirect auctions, FINRA short interest & dark pools, CFTC COT futures positioning, Crypto Fear & Greed, and SEC EDGAR filings; supports both stdio and `--http` Streamable HTTP)
 - **Prediction markets** (Kalshi + Polymarket, read-only MCP)
 - **IB lean bridge** (historical bars, quotes, positions, account summary, contract details, order preview and gated order entry via local TWS/IB Gateway)
 - **SEC EDGAR XML parser** (zero-dependency Form 4 insider trades and 13F-HR institutional holdings parser)
@@ -83,6 +84,7 @@ The IB bridge tests use a stand-in for the IB client, so they need the packages 
 
 | MCP | Tools |
 |-----|--------|
+| `market-data` | `get_kraken_ticker`, `get_kraken_orderbook`, `get_kraken_ohlc`, `get_kraken_trades`, `list_kraken_pairs`, `get_cboe_quote`, `get_cboe_options_analytics`, `get_cboe_market_put_call`, `get_cboe_history`, `get_fred_series`, `get_treasury_auctions`, `get_finra_short_interest`, `get_finra_dark_pool_ats`, `get_cftc_cot`, `get_crypto_fear_greed`, `get_sec_filings` |
 | `prediction-markets` | `list_kalshi_markets`, `get_kalshi_market`, `get_kalshi_orderbook`, `get_kalshi_trades`, `get_kalshi_candlesticks`, `list_polymarket_markets`, `get_polymarket_market`, `get_polymarket_orderbook`, `get_polymarket_price_history` |
 | `ib-lean-bridge` | `ping`, `get_historical_bars`, `get_contract_details`, `get_open_orders`, `get_positions`, `get_account_summary`, `get_quote`, `preview_order`, `place_order`, `cancel_order` |
 

@@ -1,5 +1,14 @@
 {
   "mcpServers": {
+    "market-data": {
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/agent-tools/universal-instruments-plugin/mcp/market-data/dist/index.js"
+      ],
+      "env": {
+        "SEC_USER_AGENT": "${env:SEC_USER_AGENT}"
+      }
+    },
     "prediction-markets": {
       "command": "node",
       "args": [

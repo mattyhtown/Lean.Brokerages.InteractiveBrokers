@@ -15,7 +15,8 @@ Use this after connecting or reconnecting brokers in **Cursor → Settings → T
 | **Sp-global** | Authenticated | Needed for fundamentals; shows `needsAuth` until connected |
 | **Daloopa** | Authenticated | Needed for fundamentals and earnings detail; shows `needsAuth` until connected |
 | **You-finance** | Authenticated | Shows `needsAuth` until connected |
-| **prediction-markets** (this plugin) | `list_kalshi_markets`, `list_polymarket_markets` | No secrets for read-only Gamma/Kalshi public APIs |
+| **market-data** (this plugin) | 16 live tools (`get_kraken_*`, `get_cboe_*`, `get_fred_series`, `get_treasury_auctions`, `get_finra_*`, `get_cftc_cot`, `get_crypto_fear_greed`, `get_sec_filings`) | Zero keys for 15 tools; optional `SEC_USER_AGENT` for SEC EDGAR. Supports stdio and `--http --port 3100` |
+| **prediction-markets** (this plugin) | `list_kalshi_markets`, `get_kalshi_market`, `get_kalshi_orderbook`, `get_kalshi_trades`, `get_kalshi_candlesticks`, `list_polymarket_markets`, `get_polymarket_market`, `get_polymarket_orderbook`, `get_polymarket_price_history` | No secrets for read-only Gamma/Kalshi public APIs |
 | **ib-lean-bridge** (this plugin) | `ping`, `get_account_summary`, `get_positions`, `get_quote`, `get_historical_bars`, `preview_order` | Requires local TWS/IB Gateway + env vars; run `scripts/smoke-test-ib.py` |
 
 ## Coverage checklist

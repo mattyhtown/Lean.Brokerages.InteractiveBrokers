@@ -29,6 +29,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+MD_DIR="${PLUGIN_DIR}/mcp/market-data"
 PM_DIR="${PLUGIN_DIR}/mcp/prediction-markets"
 IB_DIR="${PLUGIN_DIR}/mcp/ib-lean-bridge"
 VENV_DIR="${IB_DIR}/.venv"
@@ -47,11 +48,13 @@ run() {
 echo "Plugin directory: ${PLUGIN_DIR}"
 
 echo ""
-echo "1. Building prediction-markets MCP..."
+echo "1. Building market-data and prediction-markets MCP servers..."
 if ! command -v npm >/dev/null 2>&1; then
-  echo "ERROR: npm is required to build prediction-markets." >&2
+  echo "ERROR: npm is required to build market-data and prediction-markets." >&2
   exit 1
 fi
+run npm --prefix "${MD_DIR}" ci
+run npm --prefix "${MD_DIR}" run build
 run npm --prefix "${PM_DIR}" ci
 run npm --prefix "${PM_DIR}" run build
 
@@ -99,13 +102,20 @@ fi
 echo ""
 echo "4. Ready-to-paste ~/.cursor/mcp.json entry (not written automatically):"
 echo ""
-python3 - "${PM_DIR}/dist/index.js" "${IB_PYTHON}" "${IB_DIR}/server.py" <<'EOF'
+python3 - "${MD_DIR}/dist/index.js" "${PM_DIR}/dist/index.js" "${IB_PYTHON}" "${IB_DIR}/server.py" <<'EOF'
 import json
 import sys
 
-pm_entry, ib_python, ib_server = sys.argv[1], sys.argv[2], sys.argv[3]
+md_entry, pm_entry, ib_python, ib_server = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 snippet = {
     "mcpServers": {
+        "market-data": {
+            "command": "node",
+            "args": [md_entry],
+            "env": {
+                "SEC_USER_AGENT": "",
+            },
+        },
         "prediction-markets": {
             "command": "node",
             "args": [pm_entry],
@@ -128,5 +138,7 @@ EOF
 echo ""
 echo "Next steps:"
 echo "  - Restart Cursor after updating ~/.cursor/mcp.json."
+echo "  - Optional: run market-data as a standalone Streamable HTTP MCP server on 127.0.0.1:3100:"
+echo "      node \"${MD_DIR}/dist/index.js\" --http --port 3100"
 echo "  - Start local TWS (paper port 7497) or IB Gateway (paper port 4002), then run:"
 echo "      \"${IB_PYTHON}\" \"${PLUGIN_DIR}/scripts/smoke-test-ib.py\" --port 7497"
