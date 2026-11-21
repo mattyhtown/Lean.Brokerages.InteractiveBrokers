@@ -9,10 +9,20 @@
     },
     "unusualwhales-local": {
       "command": "npx",
-      "args": ["-y", "@unusualwhales/mcp"],
+      "args": ["-y", "@unusualwhales/mcp@1.2.0"],
       "env": {
         "UW_API_KEY": "YOUR_API_KEY"
       }
+    },
+    "databento": {
+      "command": "dbn-go-mcp-meta",
+      "args": [],
+      "env": {
+        "DATABENTO_API_KEY": "YOUR_DATABENTO_API_KEY"
+      }
+    },
+    "thetadata": {
+      "url": "http://127.0.0.1:25503/mcp/sse"
     },
     "prediction-markets": {
       "command": "node",
