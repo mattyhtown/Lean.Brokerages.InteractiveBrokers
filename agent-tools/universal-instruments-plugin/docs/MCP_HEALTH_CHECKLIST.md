@@ -8,7 +8,7 @@ Use this after connecting or reconnecting brokers in **Cursor → Settings → T
 |--------|----------------|---------------|
 | **Alpaca-trading** | Tools visible, no `needsAuth` | Call `get_account_info` or `get_clock` |
 | **Alpaca-trading-paper** | Authenticated | Same tools against paper account |
-| **Alpaca-broker** | Authenticated | Required for broker/partner API features |
+| **Alpaca-broker**, **Alpaca-broker-sandbox** | Not connected | Not needed. This is Alpaca's Broker API for firms that open accounts for their own customers; trading your own account uses `Alpaca-trading` |
 | **Coinbase** | Trading tools listed | `coinbase_balance` or `coinbase_products_list` |
 | **ORATS** | Tools discovered (not empty namespace) | Reconnect if discovery failed |
 | **Kraken** | Tools discovered | Reconnect if discovery failed |
@@ -37,7 +37,7 @@ Asset class, the tool that serves it, what the account needs, and what a live ca
 | Options analytics | `orats` | ORATS subscription | Tool discovery failed; reconnect in Cursor settings. |
 | Kraken | `Kraken` | Kraken API connection | Tool discovery failed; reconnect in Cursor settings. |
 | Paper trading | `Alpaca-trading-paper` (same tools as `Alpaca-trading`, against the paper account) | Sign-in | Connected. `get_account_info` returned status `ACTIVE`, options level 3, shorting enabled and crypto active. Data entitlements match the live connection: `feed=opra` returned 403 "OPRA agreement is not signed" and the SPX chain returned on `feed=indicative`. No order was placed. |
-| Broker API | `Alpaca-broker`, `Alpaca-broker-sandbox` | Sign-in for each; these are Alpaca's Broker API for firms that open accounts for their own customers, not needed to trade your own account | Both report that authentication is required. |
+| Broker API | `Alpaca-broker`, `Alpaca-broker-sandbox` | Sign-in for each; these are Alpaca's Broker API for firms that open accounts for their own customers, not needed to trade your own account | Not used. The account owner trades through the Trading API and declined the Broker sign-in on 2026-11-21; leave both disconnected. |
 
 ## Alpaca — options and index options
 

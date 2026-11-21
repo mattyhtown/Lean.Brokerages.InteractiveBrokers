@@ -212,7 +212,7 @@ The list has no intraday bars and nothing for futures, forex or crypto. If it is
 
 ## MCP health
 
-If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugin. As checked on 2026-11-15, `orats` and `Kraken` fail tool discovery and `Alpaca-broker` needs a sign-in; reconnect them in Cursor settings. `Alpaca-trading`, `Alpaca-trading-paper` and `Coinbase` are connected.
+If a namespace fails discovery, see `docs/MCP_HEALTH_CHECKLIST.md` in this plugin. As checked on 2026-11-15, `orats` and `Kraken` fail tool discovery; reconnect them in Cursor settings. `Alpaca-trading`, `Alpaca-trading-paper` and `Coinbase` are connected. `Alpaca-broker` and `Alpaca-broker-sandbox` are not used: Alpaca orders and data go through the Trading API connections.
 
 ## Examples
 
