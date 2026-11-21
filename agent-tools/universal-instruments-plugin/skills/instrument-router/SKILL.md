@@ -48,7 +48,7 @@ description: Route research and trades to the right MCP by asset class (equities
 | Kalshi events / book | `prediction-markets` `list_kalshi_markets`, `get_kalshi_orderbook` | — |
 | Polymarket events / book | `prediction-markets` `list_polymarket_markets`, `get_polymarket_orderbook` | — |
 | Kalshi price history and trade tape | `prediction-markets` `get_kalshi_candlesticks` (needs the market's `series_ticker`, a start and end in Unix seconds, and a candle length of 1, 60 or 1440 minutes) and `get_kalshi_trades` | — |
-| Polymarket price history | `prediction-markets` `get_polymarket_price_history` with the token id and either `interval` (`1h`, `6h`, `1d`, `1w`, or `1m` for one month) or `start_ts` and `end_ts` | — |
+| Polymarket price history | `prediction-markets` `get_polymarket_price_history` with the token id and either `interval` (`1h`, `6h`, `1d`, `1w`, or `1m` for one month) or `start_ts` and `end_ts`, not both | — |
 
 ## Research data routing
 

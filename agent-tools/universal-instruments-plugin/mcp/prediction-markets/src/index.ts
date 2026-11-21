@@ -235,7 +235,7 @@ server.tool(
 
 server.tool(
   "get_polymarket_price_history",
-  "Get price history for a Polymarket outcome token from the CLOB API (read-only). Pass either interval, or start_ts and end_ts.",
+  "Get price history for a Polymarket outcome token from the CLOB API (read-only). Pass either interval, or start_ts and end_ts, not both.",
   {
     token_id: z.string().describe("CLOB token id (from market clobTokenIds)"),
     interval: z
@@ -260,15 +260,27 @@ server.tool(
       .describe("Minutes between points"),
   },
   async ({ token_id, interval, start_ts, end_ts, fidelity }) => {
-    const hasRange = start_ts !== undefined && end_ts !== undefined;
-    if (!interval && !hasRange) {
+    const hasStart = start_ts !== undefined;
+    const hasEnd = end_ts !== undefined;
+    if (hasStart !== hasEnd) {
+      throw new Error("Provide start_ts and end_ts together");
+    }
+    // The CLOB API answers a request that carries both, but returns the range and
+    // ignores interval; refuse it so the caller is not handed a window it did not ask for.
+    if (interval && hasStart) {
+      throw new Error("Provide interval, or start_ts and end_ts, not both");
+    }
+    if (!interval && !hasStart) {
       throw new Error("Provide interval, or both start_ts and end_ts");
+    }
+    if (hasStart && hasEnd && start_ts >= end_ts) {
+      throw new Error("start_ts must be before end_ts");
     }
     const params = new URLSearchParams();
     params.set("market", token_id);
     if (interval) params.set("interval", interval);
-    if (start_ts !== undefined) params.set("startTs", String(start_ts));
-    if (end_ts !== undefined) params.set("endTs", String(end_ts));
+    if (hasStart) params.set("startTs", String(start_ts));
+    if (hasEnd) params.set("endTs", String(end_ts));
     if (fidelity) params.set("fidelity", String(fidelity));
     const url = `${POLYMARKET_CLOB}/prices-history?${params.toString()}`;
     const data = await fetchJson(url);
