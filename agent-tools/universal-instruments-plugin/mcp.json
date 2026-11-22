@@ -1,5 +1,14 @@
 {
   "mcpServers": {
+    "market-data": {
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/agent-tools/universal-instruments-plugin/mcp/market-data/dist/index.js"
+      ],
+      "env": {
+        "SEC_USER_AGENT": "${env:SEC_USER_AGENT}"
+      }
+    },
     "prediction-markets": {
       "command": "node",
       "args": [
@@ -14,7 +23,9 @@
       "env": {
         "IB_HOST": "${env:IB_HOST}",
         "IB_PORT": "${env:IB_PORT}",
-        "IB_CLIENT_ID": "${env:IB_CLIENT_ID}"
+        "IB_CLIENT_ID": "${env:IB_CLIENT_ID}",
+        "IB_ACCOUNT": "${env:IB_ACCOUNT}",
+        "IB_ALLOW_ORDERS": "${env:IB_ALLOW_ORDERS}"
       }
     }
   }

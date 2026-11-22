@@ -167,6 +167,129 @@ server.tool(
   }
 );
 
+server.tool(
+  "get_kalshi_trades",
+  "List executed trades for a Kalshi market, newest first (read-only).",
+  {
+    ticker: z.string().describe("Market ticker"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .optional()
+      .describe("Page size (default 100)"),
+    cursor: z.string().optional().describe("Pagination cursor from prior response"),
+    min_ts: z
+      .number()
+      .int()
+      .optional()
+      .describe("Only trades at or after this Unix time in seconds"),
+    max_ts: z
+      .number()
+      .int()
+      .optional()
+      .describe("Only trades at or before this Unix time in seconds"),
+  },
+  async ({ ticker, limit, cursor, min_ts, max_ts }) => {
+    const params = new URLSearchParams();
+    params.set("ticker", ticker);
+    if (limit) params.set("limit", String(limit));
+    if (cursor) params.set("cursor", cursor);
+    if (min_ts !== undefined) params.set("min_ts", String(min_ts));
+    if (max_ts !== undefined) params.set("max_ts", String(max_ts));
+    const url = `${KALSHI_BASE}/markets/trades?${params.toString()}`;
+    const data = await fetchJson(url);
+    return {
+      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+    };
+  }
+);
+
+server.tool(
+  "get_kalshi_candlesticks",
+  "Get price history for a Kalshi market as candlesticks: yes bid, yes ask, traded price, volume and open interest per period (read-only).",
+  {
+    series_ticker: z
+      .string()
+      .describe("Series ticker the market belongs to (e.g. KXFEDCUT); see the market's event"),
+    ticker: z.string().describe("Market ticker"),
+    start_ts: z.number().int().describe("Start of the range, Unix time in seconds"),
+    end_ts: z.number().int().describe("End of the range, Unix time in seconds"),
+    period_interval: z
+      .union([z.literal(1), z.literal(60), z.literal(1440)])
+      .describe("Candle length in minutes: 1, 60 or 1440"),
+  },
+  async ({ series_ticker, ticker, start_ts, end_ts, period_interval }) => {
+    const params = new URLSearchParams();
+    params.set("start_ts", String(start_ts));
+    params.set("end_ts", String(end_ts));
+    params.set("period_interval", String(period_interval));
+    const url = `${KALSHI_BASE}/series/${encodeURIComponent(series_ticker)}/markets/${encodeURIComponent(ticker)}/candlesticks?${params.toString()}`;
+    const data = await fetchJson(url);
+    return {
+      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+    };
+  }
+);
+
+server.tool(
+  "get_polymarket_price_history",
+  "Get price history for a Polymarket outcome token from the CLOB API (read-only). Pass either interval, or start_ts and end_ts, not both.",
+  {
+    token_id: z.string().describe("CLOB token id (from market clobTokenIds)"),
+    interval: z
+      .enum(["1h", "6h", "1d", "1w", "1m"])
+      .optional()
+      .describe("Look-back window ending now; 1m is one month"),
+    start_ts: z
+      .number()
+      .int()
+      .optional()
+      .describe("Start of the range, Unix time in seconds (use with end_ts)"),
+    end_ts: z
+      .number()
+      .int()
+      .optional()
+      .describe("End of the range, Unix time in seconds (use with start_ts)"),
+    fidelity: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Minutes between points"),
+  },
+  async ({ token_id, interval, start_ts, end_ts, fidelity }) => {
+    const hasStart = start_ts !== undefined;
+    const hasEnd = end_ts !== undefined;
+    if (hasStart !== hasEnd) {
+      throw new Error("Provide start_ts and end_ts together");
+    }
+    // The CLOB API answers a request that carries both, but returns the range and
+    // ignores interval; refuse it so the caller is not handed a window it did not ask for.
+    if (interval && hasStart) {
+      throw new Error("Provide interval, or start_ts and end_ts, not both");
+    }
+    if (!interval && !hasStart) {
+      throw new Error("Provide interval, or both start_ts and end_ts");
+    }
+    if (hasStart && hasEnd && start_ts >= end_ts) {
+      throw new Error("start_ts must be before end_ts");
+    }
+    const params = new URLSearchParams();
+    params.set("market", token_id);
+    if (interval) params.set("interval", interval);
+    if (hasStart) params.set("startTs", String(start_ts));
+    if (hasEnd) params.set("endTs", String(end_ts));
+    if (fidelity) params.set("fidelity", String(fidelity));
+    const url = `${POLYMARKET_CLOB}/prices-history?${params.toString()}`;
+    const data = await fetchJson(url);
+    return {
+      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+    };
+  }
+);
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
